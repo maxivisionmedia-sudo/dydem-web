@@ -39,6 +39,18 @@ const isAdmin=()=>!!currentAccount&&currentAccount.role==='admin'&&currentAccoun
 const isSignedIn=()=>!!currentAccount&&currentAccount.active;
 function syncState(message,error=false,busy=false){const el=$('sync-state');if(!el)return;el.textContent=message;el.classList.toggle('is-error',error);el.classList.toggle('is-busy',busy)}
 function messageError(err){return (err&&err.message)||String(err||'Error desconocido')}
+async function edgeErrorMessage(err){
+ const response=err?.context;
+ if(response&&typeof response.json==='function'){
+  try{
+   const payload=await response.clone().json();
+   if(payload?.error)return String(payload.error);
+  }catch(_){}
+  if(response.status===429)return 'Supabase ha limitado el envío de correos. Prueba la opción de contraseña temporal o configura SMTP propio.';
+  return 'Error de servidor (HTTP '+response.status+').';
+ }
+ return messageError(err);
+}
 function connectionConfig(){const cfg=window.DYDEM_CONFIG||{};if(!cfg.url||!/^https:\/\/[^/]+/.test(cfg.url)||!cfg.anonKey||cfg.anonKey.includes('REEMPLAZAR')||!window.supabase?.createClient)return null;return cfg}
 function showSetupError(){const el=$('access-error');$('access-help').textContent='La instalación todavía no está conectada a Supabase.';el.textContent='Configura site/config.js con la URL y la clave pública del proyecto. Después publica el sitio por HTTPS. Consulta INSTRUCCIONES.md.';$('access-submit').disabled=true}
 function enterAccount(profile){currentAccount={...profile,name:profile.display_name||profile.email||'Usuario'};document.body.classList.add('signed-in');document.body.classList.toggle('viewer-mode',!isAdmin());if(recoverMode)showRecoveryForm();else {$('access-gate').hidden=true;$('reset-container').hidden=true;}$('session-label').textContent=currentAccount.name+' · '+(isAdmin()?'Administrador':'Solo lectura');$('manage-users').hidden=!isAdmin();$('user-management').hidden=true;render();}
@@ -109,7 +121,44 @@ $('change-password').onclick=()=>{
 $('cancel-password').onclick=()=>{storeSet(RECOVERY_PENDING_KEY,'0');showLoginForm();};
 async function showUsers(){if(!isAdmin())return;const {data,error}=await cloud.from('profiles').select('id,email,display_name,role,active').order('created_at',{ascending:true});if(error){$('user-error').textContent=messageError(error);return}$('user-list').innerHTML=(data||[]).map(a=>`<div class="user-entry"><span><b>${esc(a.display_name||a.email)}</b> · ${esc(a.email)} · ${a.role==='admin'?'Administrador':'Visualizador'} · ${a.active?'Activo':'Desactivado'}</span>${a.id===currentAccount.id?'(sesión actual)':`<button class="btn secondary" type="button" data-toggle-user="${esc(a.id)}" data-active="${a.active?'true':'false'}">${a.active?'Desactivar':'Reactivar'}</button>`}</div>`).join('')}
 $('manage-users').onclick=()=>{if(!isAdmin())return;$('user-management').hidden=!$('user-management').hidden;if(!$('user-management').hidden)showUsers()};
-$('user-create').onsubmit=async e=>{e.preventDefault();if(!isAdmin())return;const btn=e.submitter;btn.disabled=true;$('user-error').textContent='Enviando invitación…';try{const {data,error}=await cloud.functions.invoke('manage-users',{body:{action:'invite',email:$('new-user').value.trim(),name:$('new-name').value.trim(),role:$('new-role').value}});if(error)throw error;if(data?.error)throw Error(data.error);$('user-error').textContent='Invitación enviada. La persona deberá aceptar el correo y establecer su contraseña.';$('user-create').reset();await showUsers()}catch(err){$('user-error').textContent='No se pudo invitar: '+messageError(err)}finally{btn.disabled=false}};
+$('user-create').onsubmit=async e=>{
+ e.preventDefault();if(!isAdmin())return;
+ const btn=e.submitter||$('user-create').querySelector('button[type="submit"]');
+ const temporary=$('new-method').value==='temporary';
+ btn.disabled=true;
+ $('temporary-access').hidden=true;
+ $('temporary-password').value='';
+ $('user-error').textContent=temporary?'Creando cuenta…':'Enviando invitación…';
+ try{
+  const {data,error}=await cloud.functions.invoke('manage-users',{
+   body:{action:temporary?'create-password-user':'invite',email:$('new-user').value.trim(),name:$('new-name').value.trim(),role:$('new-role').value}
+  });
+  if(error)throw Error(await edgeErrorMessage(error));
+  if(data?.error)throw Error(data.error);
+  if(temporary){
+   if(!data?.temporaryPassword)throw Error('La cuenta fue creada, pero la contraseña temporal no se recibió. Consulta el administrador de Supabase.');
+   $('temporary-password').value=data.temporaryPassword;
+   $('temporary-access').hidden=false;
+   $('user-error').textContent='Cuenta creada. Copia la contraseña temporal y compártela por un canal privado; no se enviará por correo.';
+  }else{
+   $('user-error').textContent='Invitación enviada. La persona deberá aceptar el correo y establecer su contraseña.';
+  }
+  $('user-create').reset();
+  await showUsers();
+ }catch(err){
+  $('user-error').textContent='No se pudo '+(temporary?'crear el acceso':'enviar la invitación')+': '+messageError(err);
+ }finally{btn.disabled=false}
+};
+$('copy-temporary-password').onclick=async()=>{
+ const input=$('temporary-password');if(!input.value)return;
+ try{
+  await navigator.clipboard.writeText(input.value);
+  $('copy-temporary-password').textContent='Copiada';
+ }catch(err){
+  input.select();
+  $('user-error').textContent='Selecciona la contraseña temporal y cópiala con Ctrl+C.';
+ }
+};
 $('user-list').onclick=async e=>{const b=e.target.closest('[data-toggle-user]');if(!b||!isAdmin())return;const activate=b.dataset.active!=='true';if(!confirm((activate?'¿Reactivar':'¿Desactivar')+' el acceso de este usuario?'))return;b.disabled=true;try{const {data,error}=await cloud.functions.invoke('manage-users',{body:{action:'set-active',user_id:b.dataset.toggleUser,active:activate}});if(error)throw error;if(data?.error)throw Error(data.error);await showUsers()}catch(err){$('user-error').textContent=messageError(err)}finally{b.disabled=false}};
 async function initializeOnline(){
  const cfg=connectionConfig();if(!cfg){showSetupError();return}
