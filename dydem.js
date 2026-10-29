@@ -74,7 +74,7 @@ async function reloadComments(){
 }
 async function reloadActivities(force=false){if(!isSignedIn())return;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}syncState('Actualizando…',false,true);const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',PROJECT_ID).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}await reloadComments();tasks=(data||[]).map(r=>migrate({...r.data,id:Number(r.id)}));if(!collapsePreferencesInitialized){const saved=storeGet(COLLAPSE_KEY);if(saved===null){tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed()}collapsePreferencesInitialized=true}lastSynced=new Map(tasks.map(t=>[Number(t.id),JSON.stringify(t)]));revisions=new Map(data.map(r=>[Number(r.id),r.revision]));render();syncState('Actualizado');refreshQueued=false}
 function scheduleCloudRefresh(){if(refreshDelay)clearTimeout(refreshDelay);refreshDelay=setTimeout(()=>{refreshDelay=null;reloadActivities().catch(e=>syncState('No se pudo sincronizar',true))},450)}
-function startRealtime(){if(subscription){cloud.removeChannel(subscription);subscription=null}subscription=cloud.channel('dydem-obra-shared').on('postgres_changes',{event:'*',schema:'public',table:'activities',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'INSERT',schema:'public',table:'activity_comments',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).subscribe();if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(isSignedIn())reloadActivities().catch(()=>syncState('Error de actualización',true))},15000)}
+function startRealtime(){if(subscription){cloud.removeChannel(subscription);subscription=null}subscription=cloud.channel('dydem-obra-shared').on('postgres_changes',{event:'*',schema:'public',table:'activities',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'INSERT',schema:'public',table:'activity_comments',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'DELETE',schema:'public',table:'activity_comments'},()=>scheduleCloudRefresh()).subscribe();if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(isSignedIn())reloadActivities().catch(()=>syncState('Error de actualización',true))},15000)}
 async function save(){if(!isAdmin())return;savePending=true;if(saveBusy)return;saveBusy=true;syncState('Guardando…',false,true);
  try{while(savePending){savePending=false;const changed=tasks.filter(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)));
   for(const t of changed){const id=Number(t.id),expected=revisions.get(id);if(expected===undefined)throw Error('Actividad sin versión de servidor: '+id);const sent=JSON.stringify(t);const {data,error}=await cloud.rpc('update_activity',{p_id:id,p_expected_revision:expected,p_data:JSON.parse(sent)});if(error)throw error;revisions.set(id,data.revision);lastSynced.set(id,JSON.stringify(migrate(data.data)));}
@@ -221,7 +221,7 @@ function displayCommentTime(value){
 function commentListHTML(t){
  const comments=commentsFor(t.id);
  if(!comments.length)return '<div class="comment-empty">Todavía no hay comentarios.</div>';
- return `<div class="comment-list">${comments.map(c=>`<article class="comment-item"><span class="comment-avatar" aria-hidden="true">👤</span><div class="comment-bubble"><div class="comment-meta"><b>${esc(c.author_name||'Usuario')}</b><time>${esc(displayCommentTime(c.created_at))}</time></div><div class="comment-text">${esc(c.body)}</div></div></article>`).join('')}</div>`;
+ return `<div class="comment-list">${comments.map(c=>`<article class="comment-item"><span class="comment-avatar" aria-hidden="true">👤</span><div class="comment-bubble"><div class="comment-meta"><b>${esc(c.author_name||'Usuario')}</b><time>${esc(displayCommentTime(c.created_at))}</time>${isAdmin()?`<button type="button" class="comment-delete" data-delete-comment="${Number(c.id)}" data-comment-activity="${Number(t.id)}" aria-label="Eliminar comentario" title="Eliminar este comentario">Eliminar</button>`:""}</div><div class="comment-text">${esc(c.body)}</div></div></article>`).join('')}</div>`;
 }
 function sectionIsOpen(id,name){return sectionOpen.get(name+':'+id)!==false}
 function commentsSection(t){
@@ -318,6 +318,40 @@ document.addEventListener('toggle',event=>{
 $('board').addEventListener('input',event=>{
  const el=event.target;
  if(el.matches('textarea[data-comment-input]'))commentDrafts.set(Number(el.dataset.commentInput),el.value);
+});
+$('board').addEventListener('click',async event=>{
+ const button=event.target.closest('button[data-delete-comment]');
+ if(!button)return;
+ if(!isAdmin()){
+  alert('Solo los administradores pueden eliminar comentarios.');
+  return;
+ }
+ const activityId=Number(button.dataset.commentActivity),commentId=Number(button.dataset.deleteComment);
+ const activity=task(activityId);
+ if(!activity || !commentsFor(activityId).some(c=>Number(c.id)===commentId))return;
+ if(!confirm('¿Eliminar definitivamente este comentario? Esta acción no se puede deshacer.'))return;
+ const section=button.closest('.comments-section');
+ const feedback=section?.querySelector('.comment-feedback');
+ button.disabled=true;
+ if(feedback)feedback.textContent='Eliminando comentario…';
+ try{
+  const {data,error}=await cloud.from('activity_comments').delete()
+    .eq('id',commentId).eq('activity_id',activityId).eq('project_id',PROJECT_ID)
+    .select('id');
+  if(error)throw error;
+  if(!data||data.length!==1)throw Error('No se confirmó la eliminación. Comprueba tus permisos y actualiza la página.');
+  await reloadComments();
+  if(section?.isConnected){
+   const feed=section.querySelector('[data-comment-feed]');
+   if(feed)feed.innerHTML=commentListHTML(activity);
+   const count=section.querySelector('.comment-count');
+   if(count)count.textContent=String(commentsFor(activityId).length);
+   if(feedback)feedback.textContent='Comentario eliminado.';
+  }
+ }catch(error){
+  if(feedback)feedback.textContent='No se pudo eliminar: '+messageError(error);
+  button.disabled=false;
+ }
 });
 $('board').addEventListener('submit',async event=>{
  const form=event.target.closest('form[data-comment-form]');
