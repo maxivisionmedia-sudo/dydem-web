@@ -14,15 +14,35 @@ const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g
 // Autenticación y datos centralizados: nunca se almacenan contraseñas en DYDEM.
 let currentAccount=null,cloud=null,authReady=false,subscription=null,refreshTimer=null;
 let lastSynced=new Map(),revisions=new Map(),saveBusy=false,savePending=false,refreshQueued=false,refreshDelay=null;
-let recoverMode=false;
+// El enlace puede abrirse en otra pestaña; esta preferencia no autoriza ninguna sesión.
+const RECOVERY_PENDING_KEY='dydem-recovery-pending-v1';
+const authHashParams=new URLSearchParams(location.hash.replace(/^#/,''));
+const authSearchParams=new URLSearchParams(location.search);
+let recoverMode=authHashParams.get('type')==='recovery'||authSearchParams.get('type')==='recovery'||
+  (storeGet(RECOVERY_PENDING_KEY)==='1'&&(authHashParams.has('access_token')||authSearchParams.has('code')));
+function showRecoveryForm(){
+ recoverMode=true;
+ $('access-title').textContent='Establecer nueva contraseña';
+ $('access-help').textContent='Enlace de recuperación: crea una nueva contraseña para tu cuenta DYDEM.';
+ $('access-form').hidden=true;$('recover-password').hidden=true;$('use-recovery-code').hidden=true;
+ $('otp-container').hidden=true;$('reset-container').hidden=false;$('access-gate').hidden=false;
+}
+function showLoginForm(message=''){
+ recoverMode=false;
+ $('access-title').textContent='Acceso a DYDEM en línea';
+ $('access-help').textContent='Inicia sesión con el correo electrónico de tu cuenta.';
+ $('access-form').hidden=false;$('recover-password').hidden=false;$('use-recovery-code').hidden=false;
+ $('otp-container').hidden=true;$('reset-container').hidden=true;
+ $('access-gate').hidden=isSignedIn();$('access-error').textContent=message;
+}
 const isAdmin=()=>!!currentAccount&&currentAccount.role==='admin'&&currentAccount.active;
 const isSignedIn=()=>!!currentAccount&&currentAccount.active;
 function syncState(message,error=false,busy=false){const el=$('sync-state');if(!el)return;el.textContent=message;el.classList.toggle('is-error',error);el.classList.toggle('is-busy',busy)}
 function messageError(err){return (err&&err.message)||String(err||'Error desconocido')}
 function connectionConfig(){const cfg=window.DYDEM_CONFIG||{};if(!cfg.url||!/^https:\/\/[^/]+/.test(cfg.url)||!cfg.anonKey||cfg.anonKey.includes('REEMPLAZAR')||!window.supabase?.createClient)return null;return cfg}
 function showSetupError(){const el=$('access-error');$('access-help').textContent='La instalación todavía no está conectada a Supabase.';el.textContent='Configura site/config.js con la URL y la clave pública del proyecto. Después publica el sitio por HTTPS. Consulta INSTRUCCIONES.md.';$('access-submit').disabled=true}
-function enterAccount(profile){currentAccount={...profile,name:profile.display_name||profile.email||'Usuario'};document.body.classList.add('signed-in');document.body.classList.toggle('viewer-mode',!isAdmin());$('access-gate').hidden=!recoverMode;$('reset-container').hidden=!recoverMode;$('session-label').textContent=currentAccount.name+' · '+(isAdmin()?'Administrador':'Solo lectura');$('manage-users').hidden=!isAdmin();$('user-management').hidden=true;render();}
-async function loadAccount(){const {data:sessionData,error:sessionError}=await cloud.auth.getSession();if(sessionError)throw sessionError;const user=sessionData.session?.user;if(!user){await leaveAccount(false);return}const {data:profile,error}=await cloud.from('profiles').select('id,email,display_name,role,active').eq('id',user.id).single();if(error||!profile||!profile.active){await cloud.auth.signOut();throw Error('Esta cuenta no tiene acceso activo a DYDEM. Consulta a un administrador.')}enterAccount(profile);await reloadActivities(true);startRealtime();if(isAdmin())setTimeout(startup,150)}
+function enterAccount(profile){currentAccount={...profile,name:profile.display_name||profile.email||'Usuario'};document.body.classList.add('signed-in');document.body.classList.toggle('viewer-mode',!isAdmin());if(recoverMode)showRecoveryForm();else {$('access-gate').hidden=true;$('reset-container').hidden=true;}$('session-label').textContent=currentAccount.name+' · '+(isAdmin()?'Administrador':'Solo lectura');$('manage-users').hidden=!isAdmin();$('user-management').hidden=true;render();}
+async function loadAccount(){const {data:sessionData,error:sessionError}=await cloud.auth.getSession();if(sessionError)throw sessionError;const user=sessionData.session?.user;if(!user){await leaveAccount(false);return}const {data:profile,error}=await cloud.from('profiles').select('id,email,display_name,role,active').eq('id',user.id).single();if(error||!profile||!profile.active){await cloud.auth.signOut();throw Error('Esta cuenta no tiene acceso activo a DYDEM. Consulta a un administrador.')}enterAccount(profile);await reloadActivities(true);startRealtime();if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
 async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;tasks=[];lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode');$('access-gate').hidden=false;$('user-management').hidden=true;$('access-pass').value='';render();syncState('Sin sesión')}
 function isDirty(){return tasks.some(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)))}
 async function reloadActivities(force=false){if(!isSignedIn())return;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}syncState('Actualizando…',false,true);const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',PROJECT_ID).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}tasks=(data||[]).map(r=>migrate({...r.data,id:Number(r.id)}));if(!collapsePreferencesInitialized){const saved=storeGet(COLLAPSE_KEY);if(saved===null){tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed()}collapsePreferencesInitialized=true}lastSynced=new Map(tasks.map(t=>[Number(t.id),JSON.stringify(t)]));revisions=new Map(data.map(r=>[Number(r.id),r.revision]));render();syncState('Actualizado');refreshQueued=false}
@@ -37,17 +57,82 @@ async function save(){if(!isAdmin())return;savePending=true;if(saveBusy)return;s
 $('access-form').addEventListener('submit',async e=>{e.preventDefault();if(!cloud)return;const btn=$('access-submit');btn.disabled=true;$('access-error').textContent='';try{const {error}=await cloud.auth.signInWithPassword({email:$('access-user').value.trim(),password:$('access-pass').value});if(error)throw error;await loadAccount()}catch(err){$('access-error').textContent='No se pudo iniciar sesión: '+messageError(err)}finally{btn.disabled=false;$('access-pass').value=''}});
 $('signout').onclick=()=>{if((isDirty()||saveBusy)&&!confirm('Hay cambios que aún no se han guardado. ¿Cerrar sesión y descartarlos?'))return;leaveAccount().catch(e=>alert(messageError(e)))};
 $('reload-cloud').onclick=()=>{if((saveBusy||isDirty())&&!confirm('Hay cambios aún no confirmados. ¿Descartar los cambios locales y actualizar desde el servidor?'))return;reloadActivities(true).catch(e=>alert('Error: '+messageError(e)))};
-$('recover-password').onclick=async()=>{if(!cloud)return;const email=$('access-user').value.trim();if(!email){$('access-error').textContent='Escribe primero tu correo electrónico.';return}try{const {error}=await cloud.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});if(error)throw error;$('access-error').textContent='Si existe la cuenta, recibirás un correo para restablecer tu contraseña.'}catch(e){$('access-error').textContent=messageError(e)}};
-$('reset-form').onsubmit=async e=>{e.preventDefault();const password=$('reset-password').value;if(password.length<10)return;const {error}=await cloud.auth.updateUser({password});if(error){$('access-error').textContent=messageError(error);return}$('reset-container').hidden=true;$('access-error').textContent='Contraseña actualizada.';recoverMode=false;await loadAccount().catch(e=>{$('access-error').textContent=messageError(e)})};
-$('change-password').onclick=()=>{if(!isSignedIn())return;recoverMode=true;$('reset-container').hidden=false;$('access-gate').hidden=false;$('access-error').textContent='Introduce una nueva contraseña de al menos diez caracteres.'};
-$('cancel-password').onclick=()=>{recoverMode=false;$('reset-container').hidden=true;$('access-gate').hidden=isSignedIn();$('access-error').textContent=''};
+$('recover-password').onclick=async()=>{
+ if(!cloud)return;const email=$('access-user').value.trim();
+ if(!email){$('access-error').textContent='Escribe primero tu correo electrónico.';return}
+ try{
+  const {error}=await cloud.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+  if(error)throw error;
+  storeSet(RECOVERY_PENDING_KEY,'1');$('otp-email').value=email;
+  $('access-error').textContent='Correo solicitado. Abre el enlace más reciente; si recibiste un código numérico, selecciona «Tengo un código de recuperación».';
+ }catch(e){$('access-error').textContent=messageError(e)}
+};
+$('use-recovery-code').onclick=()=>{
+ $('otp-container').hidden=false;$('otp-email').value=$('otp-email').value||$('access-user').value.trim();
+ $('access-error').textContent='Introduce el código numérico que llegó a tu correo. Si recibiste un enlace, ábrelo en lugar de escribir un código.';
+};
+$('otp-form').onsubmit=async e=>{
+ e.preventDefault();if(!cloud)return;
+ const email=$('otp-email').value.trim(),token=$('otp-token').value.replace(/\s+/g,'');
+ if(!email||!/^\d{6,8}$/.test(token)){$('access-error').textContent='Introduce el correo y el código numérico completo.';return}
+ const btn=$('verify-otp');btn.disabled=true;
+ try{
+  const {error}=await cloud.auth.verifyOtp({email,token,type:'recovery'});
+  if(error)throw error;
+  showRecoveryForm();$('access-error').textContent='Código validado. Ahora crea una contraseña nueva.';
+ }catch(err){$('access-error').textContent='No se pudo validar el código: '+messageError(err)}
+ finally{btn.disabled=false}
+};
+$('reset-form').onsubmit=async e=>{
+ e.preventDefault();if(!cloud)return;
+ const password=$('reset-password').value;
+ if(password.length<10){$('access-error').textContent='Utiliza al menos 10 caracteres.';return}
+ const btn=$('set-new-password');btn.disabled=true;$('access-error').textContent='Actualizando contraseña…';
+ try{
+  const {data:{session},error:sessionError}=await cloud.auth.getSession();
+  if(sessionError)throw sessionError;
+  if(!session)throw Error('El enlace ya expiró o no se validó. Vuelve a solicitar la recuperación e ingresa desde el correo más reciente.');
+  const {error}=await cloud.auth.updateUser({password});if(error)throw error;
+  storeSet(RECOVERY_PENDING_KEY,'0');$('reset-password').value='';
+  history.replaceState(null,'',location.pathname);
+  const {error:signoutError}=await cloud.auth.signOut();
+  if(signoutError)throw Error('Se cambió la contraseña, pero no se pudo cerrar la sesión automáticamente. Cierra sesión y vuelve a entrar.');
+  await leaveAccount(false);
+  showLoginForm('Contraseña actualizada correctamente. Inicia sesión con tu nueva contraseña.');
+ }catch(error){$('access-error').textContent=messageError(error)}
+ finally{btn.disabled=false}
+};
+$('change-password').onclick=()=>{
+ if(!isSignedIn())return;
+ showRecoveryForm();$('access-help').textContent='Sesión activa: introduce una nueva contraseña de al menos diez caracteres.';$('access-error').textContent='';
+};
+$('cancel-password').onclick=()=>{storeSet(RECOVERY_PENDING_KEY,'0');showLoginForm();};
 async function showUsers(){if(!isAdmin())return;const {data,error}=await cloud.from('profiles').select('id,email,display_name,role,active').order('created_at',{ascending:true});if(error){$('user-error').textContent=messageError(error);return}$('user-list').innerHTML=(data||[]).map(a=>`<div class="user-entry"><span><b>${esc(a.display_name||a.email)}</b> · ${esc(a.email)} · ${a.role==='admin'?'Administrador':'Visualizador'} · ${a.active?'Activo':'Desactivado'}</span>${a.id===currentAccount.id?'(sesión actual)':`<button class="btn secondary" type="button" data-toggle-user="${esc(a.id)}" data-active="${a.active?'true':'false'}">${a.active?'Desactivar':'Reactivar'}</button>`}</div>`).join('')}
 $('manage-users').onclick=()=>{if(!isAdmin())return;$('user-management').hidden=!$('user-management').hidden;if(!$('user-management').hidden)showUsers()};
 $('user-create').onsubmit=async e=>{e.preventDefault();if(!isAdmin())return;const btn=e.submitter;btn.disabled=true;$('user-error').textContent='Enviando invitación…';try{const {data,error}=await cloud.functions.invoke('manage-users',{body:{action:'invite',email:$('new-user').value.trim(),name:$('new-name').value.trim(),role:$('new-role').value}});if(error)throw error;if(data?.error)throw Error(data.error);$('user-error').textContent='Invitación enviada. La persona deberá aceptar el correo y establecer su contraseña.';$('user-create').reset();await showUsers()}catch(err){$('user-error').textContent='No se pudo invitar: '+messageError(err)}finally{btn.disabled=false}};
 $('user-list').onclick=async e=>{const b=e.target.closest('[data-toggle-user]');if(!b||!isAdmin())return;const activate=b.dataset.active!=='true';if(!confirm((activate?'¿Reactivar':'¿Desactivar')+' el acceso de este usuario?'))return;b.disabled=true;try{const {data,error}=await cloud.functions.invoke('manage-users',{body:{action:'set-active',user_id:b.dataset.toggleUser,active:activate}});if(error)throw error;if(data?.error)throw Error(data.error);await showUsers()}catch(err){$('user-error').textContent=messageError(err)}finally{b.disabled=false}};
-async function initializeOnline(){const cfg=connectionConfig();if(!cfg){showSetupError();return}cloud=window.supabase.createClient(cfg.url,cfg.anonKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
- cloud.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY'){recoverMode=true;$('reset-container').hidden=false;$('access-gate').hidden=false}if(event==='SIGNED_OUT'&&currentAccount){void leaveAccount(false)}});
- try{await loadAccount();syncState('Conectado')}catch(e){$('access-error').textContent=messageError(e);syncState('Error de acceso',true)}}
+async function initializeOnline(){
+ const cfg=connectionConfig();if(!cfg){showSetupError();return}
+ cloud=window.supabase.createClient(cfg.url,cfg.anonKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+ // Preparar interfaz antes de que el SDK procese el fragmento #access_token.
+ if(recoverMode)showRecoveryForm();
+ cloud.auth.onAuthStateChange((event)=>{
+  if(event==='PASSWORD_RECOVERY'){
+   showRecoveryForm();$('access-error').textContent='Enlace validado. Escribe tu nueva contraseña.';
+  }
+  if(event==='SIGNED_IN'&&recoverMode)showRecoveryForm();
+  if(event==='SIGNED_OUT'&&currentAccount)void leaveAccount(false);
+ });
+ try{
+  await loadAccount();
+  if(recoverMode){
+   const {data:{session}}=await cloud.auth.getSession();
+   showRecoveryForm();
+   $('access-error').textContent=session?'Enlace validado. Ahora establece tu nueva contraseña.':'No se pudo validar el enlace. Si expiró, vuelve al inicio y solicita uno nuevo.';
+  }
+  syncState('Conectado');
+ }catch(e){$('access-error').textContent=messageError(e);syncState('Error de acceso',true)}
+}
 const task=id=>tasks.find(t=>t.id===Number(id));
 function status(t){return t.steps[6]?'Terminado':Number(t.progress)>0?'En proceso':'Por empezar'}
 function selectOptions(self,selected){return '<option value="">Ninguna</option>'+tasks.filter(t=>t.id!==self).map(t=>`<option value="${t.id}" ${String(selected)===String(t.id)?'selected':''}>#${t.id} — ${esc(t.title.slice(0,65))}</option>`).join('')}
