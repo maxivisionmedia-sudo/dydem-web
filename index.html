@@ -1,0 +1,116 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DYDEM · Control de obra</title><style>
+:root{font-family:system-ui,Segoe UI,Arial,sans-serif;color:#1d293b;background:#f3f5f9}*{box-sizing:border-box}body{margin:0}header{background:#152440;color:white;padding:22px 3vw}header h1{margin:3px 0;font-size:27px}header p{margin:0;color:#bfcce0;font-size:13px}main{max-width:1550px;margin:auto;padding:18px 2vw 50px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.stat,.task,.modal-box{background:white;border:1px solid #dae1ec;border-radius:13px}.stat{padding:14px}.stat small{display:block;color:#64748b}.stat b{font-size:25px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:17px 0}.btn{border:0;border-radius:8px;background:#2558d6;color:white;padding:9px 13px;font-weight:650;cursor:pointer;font-size:13px}.btn.secondary{background:#e7ecf5;color:#253450}.btn.danger{background:#fce9e9;color:#a12b2b}.btn:disabled{opacity:.45;cursor:not-allowed}input,select,textarea{font:inherit;font-size:13px;border:1px solid #cbd5e1;border-radius:7px;padding:8px;max-width:100%;background:white;color:#172033}textarea{width:100%;min-height:65px}.toolbar input{flex:1;min-width:160px}.columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start}.column{background:#e8edf4;padding:11px;border-radius:13px;min-width:0}.column h2{font-size:15px;margin:2px 0 12px}.task{padding:13px;margin-bottom:12px;overflow-wrap:anywhere}.task h3{font-size:14px;line-height:1.4;margin:0;flex:1}.head{display:flex;gap:8px;align-items:start}.number{background:#eaf0ff;color:#2457c7;padding:4px 8px;border-radius:6px;font-weight:800}.section-title{font-size:12px;color:#52647a;font-weight:700;margin:13px 0 7px}.row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.field{display:grid;gap:3px;flex:1;min-width:115px}.field label{font-size:11px;color:#64748b}.field input,.field select{width:100%}.steps{display:grid;gap:7px}.step{border:1px solid #dce3ed;border-radius:9px;padding:9px;background:#fbfcfe}.step summary{cursor:pointer;font-size:12px;color:#526078;margin-top:5px}.step label{font-size:13px;font-weight:700;display:flex;gap:7px;align-items:center}.step input[type=checkbox]{accent-color:#2457d6;width:17px;height:17px}.detail{font-size:12px;color:#526078;margin:5px 0 0 24px;white-space:pre-wrap}.progress{height:7px;background:#e9edf5;border-radius:10px;overflow:hidden;margin-top:5px}.progress>div{height:100%;background:#2558d6}.pct{width:72px}.muted{font-size:12px;color:#64748b}.warn{color:#a55a07;font-size:12px}.empty{color:#6c7789;font-size:13px;padding:12px}.modal{position:fixed;inset:0;background:#0d1b34b0;display:flex;align-items:center;justify-content:center;padding:12px;z-index:100}.modal[hidden]{display:none}.modal-box{padding:20px;width:min(600px,100%);max-height:90vh;overflow:auto;box-shadow:0 12px 60px #101d3640}.modal-box h2{font-size:19px;margin:0 0 7px}.modal-box p{font-size:13px;color:#59677b}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:15px}.stack{display:grid;gap:12px}.error{color:#ad2828;font-size:12px;min-height:18px}.attachment{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:6px;font-size:12px}.attachment button{padding:4px 7px}.attachment a{overflow-wrap:anywhere}.foot{font-size:12px;color:#64748b;margin-top:18px}@media(max-width:1000px){.columns{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}}@media print{header{color:black;background:white}.toolbar,.btn,.modal{display:none!important}.columns{display:block}.column{background:white;break-inside:auto}.task{break-inside:avoid}.stats{grid-template-columns:repeat(4,1fr)}}
+.timeline-panel{background:white;border:1px solid #dae1ec;border-radius:13px;padding:16px;margin:16px 0}.timeline-scroll{overflow-x:auto}.tl-grid{min-width:760px}.tl-head,.tl-row{display:grid;grid-template-columns:200px minmax(500px,1fr);gap:8px;align-items:center}.tl-weeks{display:flex}.tl-week{background:#eaf0fa;border-left:2px solid #879dbc;text-align:center;font-size:10px;font-weight:bold;overflow:hidden;white-space:nowrap}.tl-row{border-bottom:1px solid #e4e9f1;min-height:42px}.tl-label{font-size:11px;text-align:left;border:0;background:none;color:#2457c7;cursor:pointer}.tl-track{height:38px;position:relative;background:#f8faff}.tl-line{position:absolute;top:0;bottom:0;border-left:1px dashed #b7c6dc}.tl-bar{position:absolute;top:9px;height:14px;background:#a8c0e3;border:1px solid #4e78b7}.tl-fill{height:100%;background:#2457d6}.tl-end{position:absolute;top:3px;transform:translateX(-50%);font-size:19px;color:#d13c36}.task:target{outline:3px solid #2457d6;scroll-margin-top:15px}
+/* Calendario diario: cada columna equivale a un día, agrupado en semanas */
+.tl-grid{min-width:max(760px, calc(200px + var(--day-count, 28) * 23px))}
+.tl-head,.tl-row{grid-template-columns:200px minmax(0,1fr)}
+.tl-head-right{min-width:0}
+.tl-week{padding:5px 0;border-left:2px solid #8ba0c0}
+.tl-days,.tl-cells{display:grid;grid-template-columns:repeat(var(--day-count),minmax(0,1fr))}
+.tl-day{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:32px;border-left:1px solid #d6dfed;background:#f3f6fb;font-size:10px}
+.tl-day:nth-child(7n+1),.tl-cell:nth-child(7n+1){border-left:2px solid #8ba0c0}
+.tl-day-today{background:#fff0d8;color:#8c5108}
+.tl-track{height:43px;position:relative;background:none}
+.tl-cells{height:100%}
+.tl-cell{height:100%;border-left:1px solid #e1e6ef;background:#fff;position:relative;display:flex;align-items:center;justify-content:center}
+.tl-cell:nth-child(7n+6),.tl-cell:nth-child(7n+7){background:#f7f9fc}
+.tl-cell.tl-scheduled{background:#b9cde9}
+.tl-cell.tl-complete{background:#2863c4}
+.tl-cell.tl-current-cell:not(.tl-complete):not(.tl-scheduled){background:#fff7e8}
+.tl-today{position:absolute;top:0;bottom:0;border-left:2px solid #e28a1c;pointer-events:none;z-index:3}
+.tl-real{color:#d12130;font-size:19px;font-weight:900;text-shadow:0 1px white;z-index:2}
+.tl-activity{padding:4px 2px;min-width:0}
+.tl-label{display:block;max-width:100%;overflow-wrap:anywhere}
+.tl-meta{font-size:10px;color:#68768b}
+.tl-mini-progress{margin-top:4px;height:6px;border-radius:6px;background:#e5ebf3;overflow:hidden}
+.tl-mini-progress>div{height:100%;background:#2457d6}
+@media print{.tl-grid{min-width:0!important}.tl-head,.tl-row{grid-template-columns:185px minmax(0,1fr)}.tl-day{min-height:26px;font-size:8px}.tl-week{font-size:9px}.tl-meta{font-size:8px}.tl-track{height:34px}.tl-label{font-size:9px}.tl-real{font-size:14px}.tl-today{border-left-width:1.5px}}
+
+/* Cronograma de tarjetas sobre celdas diarias, según referencia visual */
+.tl-reference-grid{min-width:max(900px,calc(var(--day-count)*100px));position:relative}
+.tl-head-ref{height:94px;position:relative;border-bottom:3px solid #1d293b}
+.tl-weeks-ref,.tl-days-ref{display:flex;width:100%}
+.tl-weeks-ref{height:44px}
+.tl-week-ref{padding:2px 7px;font-size:24px;background:#d8efff;border-right:2px solid #adb6c2}
+.tl-week-ref:nth-child(even){background:#fff}
+.tl-days-ref{height:47px;display:grid;grid-template-columns:repeat(var(--day-count),minmax(0,1fr))}
+.tl-day-ref{font-size:12px;text-align:center;padding:12px 0 5px;border-right:1px solid #b6c0cc;white-space:nowrap;background:#d8efff}
+.tl-day-ref:nth-child(n+8){background:#f6f8fb}
+.tl-day-ref.is-today{font-weight:bold;background:#e0f8ec}
+.tl-today-tag{position:absolute;top:90px;transform:translateX(-50%);background:#04bb72;color:#fff;font-weight:800;font-size:13px;border-radius:8px;padding:7px 11px;z-index:9;white-space:nowrap}
+.tl-row-ref{position:relative;height:120px}
+.tl-row-cells{position:absolute;inset:0;display:grid;grid-template-columns:repeat(var(--day-count),minmax(0,1fr))}
+.tl-background-cell{border-right:1px solid #b6c0cc;background:#f9fafc}
+.tl-background-cell.week-blue{background:#d8efff}.tl-background-cell.week-white{background:#fff}
+.tl-background-cell.week-start{border-left:2px solid #9da8b8}
+.tl-project-card{position:absolute;top:21px;height:82px;min-width:68px;border:2px solid #747b83;background:white;border-radius:9px;z-index:3;padding:9px 11px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden}
+.tl-card-title{font-size:14px;font-weight:650;white-space:nowrap;display:flex;align-items:center;min-width:0;gap:4px;overflow:visible}
+.tl-card-link{background:none;border:0;padding:0;color:#172033;font:inherit;font-weight:inherit;cursor:pointer;text-align:left;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-card-link:hover{color:#2457d6;text-decoration:underline}
+.tl-card-percent{font-size:12px}
+.tl-card-progress{height:10px;border-radius:10px;background:#b6b6b6;overflow:hidden}
+.tl-card-progress>div{height:100%;background:#38b6f4;border-radius:10px}
+.tl-delay{position:absolute;top:21px;height:82px;z-index:2;border:2px solid #747b83;border-left:0;border-radius:0 9px 9px 0;background:#f19a9f;display:flex;align-items:center;justify-content:center;gap:8px;font-size:12px;overflow:hidden;white-space:nowrap}
+.tl-delay-arrow{font-size:21px;color:#59636b}
+.tl-actual-marker{position:absolute;top:103px;transform:translateX(-50%);color:#c02f3a;z-index:5;font-size:14px}
+.tl-today-ref{position:absolute;top:0;bottom:0;border-left:5px solid #05bb70;z-index:6;pointer-events:none}
+@media print{.tl-reference-grid{min-width:0!important}.tl-head-ref{height:58px}.tl-weeks-ref{height:25px}.tl-week-ref{font-size:12px}.tl-days-ref{height:30px}.tl-day-ref{font-size:7px;padding:7px 0}.tl-today-tag{top:53px;font-size:8px;padding:4px}.tl-row-ref{height:72px}.tl-project-card,.tl-delay{top:10px;height:53px;padding:4px 6px;border-width:1px}.tl-card-title{font-size:9px}.tl-card-percent{font-size:8px}.tl-card-progress{height:6px}.tl-delay{font-size:8px}.tl-delay-arrow{font-size:12px}.tl-actual-marker{top:61px;font-size:10px}.tl-today-ref{border-left-width:2px}}
+.tl-compact .tl-row-ref{height:61px}.tl-compact .tl-project-card,.tl-compact .tl-delay{top:7px;height:47px;padding:7px 9px}.tl-compact .tl-card-title{font-size:13px}.tl-compact .tl-card-progress{height:8px}.tl-compact .tl-actual-marker{top:50px}.tl-compact .tl-card-percent{display:none}.tl-compact .tl-delay span:first-child{display:none}.tl-day-ref.week-blue{background:#d8efff}.tl-day-ref.week-white{background:#fff}.tl-background-cell.week-blue{background:#d8efff}.tl-background-cell.week-white{background:#fff}.activity-status-dot{display:inline-block;width:11px;height:11px;min-width:11px;border-radius:50%;vertical-align:middle;margin-right:7px;border:1px solid rgba(0,0,0,.2);box-shadow:0 0 0 1px rgba(255,255,255,.6)}.tl-card-title .activity-status-dot{width:12px;height:12px;flex-shrink:0}.task h3 .activity-status-dot{margin-right:9px}.tl-annex{display:inline-block;flex-shrink:0;font-weight:750;white-space:nowrap;background:#fff;border-radius:3px;padding:0 2px;color:#172033}.tl-title-text{display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.tl-card-link{display:inline-flex!important;align-items:center;gap:4px;min-width:0;max-width:100%;overflow:visible!important}.tl-project-card{overflow:visible!important}.tl-card-title{overflow:visible!important}.tl-card-progress{overflow:hidden}.tl-annex{position:relative;z-index:8}
+/* Colores de tarjetas según el avance real de obra */
+.tl-project-card.tl-pending{background:#ffd69c!important;border-color:#d92f32!important;top:29px;height:64px}
+.tl-project-card.tl-pending .tl-card-progress{background:#ffc4c4!important}
+.tl-project-card.tl-pending .tl-card-progress>div{background:#d92f32!important}
+.tl-project-card.tl-finished{background:#c5f0d3!important;border-color:#15965c!important}
+.tl-project-card.tl-finished .tl-card-progress{background:#9edcb6!important}
+.tl-project-card.tl-finished .tl-card-progress>div{background:#15965c!important}
+.tl-compact .tl-project-card.tl-pending{top:13px;height:36px}
+
+/* Colores de tarjetas de actividades, alineados con el cronograma */
+.task.status-pending{background:#ffd69c;border:2px solid #d92f32}
+.task.status-active{background:#fff;border:2px solid #8795a9}
+.task.status-finished{background:#c5f0d3;border:2px solid #15965c}
+.task.status-pending .number{background:#fff0dc;color:#a62a25}
+.task.status-finished .number{background:#e7fff0;color:#12653d}
+.task.status-pending .progress>div{background:#d92f32}
+.task.status-finished .progress>div{background:#15965c}
+.task .step{background:rgba(255,255,255,.86)}
+.task .collapse-btn{background:rgba(255,255,255,.78);color:#253450;border:1px solid #9ca9b8;flex-shrink:0;padding:5px 9px}
+.task.is-collapsed{padding:9px 11px}
+.task.is-collapsed .task-details{display:none}
+.task.is-collapsed .head{align-items:center}
+.task.is-collapsed h3{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.task.is-collapsed .number{white-space:nowrap;flex-shrink:0}
+
+/* Continuidad del calendario: sin espacio entre días y actividades */
+.tl-reference-grid{border:1px solid #89939e;box-sizing:border-box;overflow:hidden}
+.tl-head-ref{height:91px!important;border-bottom:0!important}
+.tl-weeks-ref{height:44px!important}
+.tl-days-ref{height:47px!important}
+.tl-day-ref{box-sizing:border-box;border-right:1px solid #7d8793!important;border-bottom:1px solid #7d8793!important}
+.tl-day-ref:last-child{border-right:0!important}
+.tl-today-continuous{position:absolute;top:44px;bottom:0;border-left:3px solid #04bb72;z-index:7;pointer-events:none}
+.tl-today-ref{display:none!important}
+
+/* Acceso por perfiles: demostración local, no sustituye a un servidor */
+body:not(.signed-in) main,body:not(.signed-in)>header{display:none!important}
+#access-gate{position:fixed;inset:0;background:#eaf1f8;z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px}
+#access-gate[hidden]{display:none!important}
+.access-box{background:#fff;border-radius:15px;max-width:430px;width:100%;padding:26px;box-shadow:0 12px 48px #203c6520}
+.access-box input,.access-box select{display:block;width:100%;padding:11px;margin:7px 0 14px;border:1px solid #aebdcd;border-radius:8px}
+.access-box label{display:block;font-weight:600;font-size:13px}
+#access-error{color:#b22;min-height:1.3em}
+#session-bar{display:none;background:#102b4c;color:#fff;padding:8px 20px;align-items:center;gap:12px;justify-content:flex-end;flex-wrap:wrap}
+body.signed-in #session-bar{display:flex}
+#session-bar button{background:#fff;color:#17385e;border:0;border-radius:6px;padding:7px 12px;cursor:pointer}
+body.viewer-mode .admin-only,body.viewer-mode [data-edit],body.viewer-mode [data-delete],body.viewer-mode [data-rename]{display:none!important}
+body.viewer-mode .task-details input:not([type=button]),body.viewer-mode .task-details select{pointer-events:none;background:#f2f4f7;opacity:.78}
+#user-management{margin:12px 0;border:1px solid #c5d1e0;border-radius:10px;padding:15px;background:#fff}
+#user-management[hidden]{display:none}
+.user-entry{display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid #e4eaf0;padding:7px 0}
+#access-gate[hidden],#user-management[hidden],#reset-container[hidden]{display:none!important}
+#sync-state{font-size:12px;padding:5px 8px;border-radius:6px;background:#28486a}
+#sync-state.is-error{background:#9f3131}#sync-state.is-busy{background:#91602a}
+body.viewer-mode .task-details input,body.viewer-mode .task-details select,body.viewer-mode .task-details textarea{cursor:default}
+.inline-download{display:inline-block;margin:3px 7px 3px 0;color:#174e93;text-decoration:underline}
+</style></head><body><div id="access-gate"><div class="access-box"><h2 id="access-title">Acceso a DYDEM en línea</h2><p id="access-help">Inicia sesión con el correo electrónico de tu cuenta.</p><form id="access-form"><label>Correo electrónico<input id="access-user" type="email" required autocomplete="username" placeholder="usuario@empresa.com"></label><label>Contraseña<input id="access-pass" type="password" required autocomplete="current-password"></label><p id="access-error" role="alert"></p><button class="btn" type="submit" id="access-submit">Iniciar sesión</button></form><button class="btn secondary" type="button" id="recover-password">Recuperar contraseña</button><div id="reset-container" hidden><h3>Establecer contraseña</h3><form id="reset-form"><label>Nueva contraseña<input type="password" id="reset-password" minlength="10" required></label><button class="btn" type="submit">Actualizar contraseña</button><button class="btn secondary" type="button" id="cancel-password">Cancelar</button></form></div><p class="muted" style="font-size:12px;margin-top:14px">Acceso privado. Las actividades se comparten con el equipo autorizado.</p></div></div><div id="session-bar"><span id="session-label"></span><span id="sync-state" aria-live="polite">Sin conexión</span><button id="reload-cloud" type="button">Actualizar</button><button id="manage-users" class="admin-only">Administrar usuarios</button><button id="change-password" type="button">Cambiar contraseña</button><button id="signout">Cerrar sesión</button></div><header><small>CONTROL DE OBRA</small><h1>Actividades Obra DYDEM</h1><p>Seguimiento de obra · 7 etapas</p></header><main><section id="user-management" hidden><h2>Accesos de DYDEM</h2><p class="muted">Los usuarios se invitan por correo electrónico. El enlace de invitación permite establecer su contraseña.</p><div id="user-list"></div><form id="user-create" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end"><label>Correo electrónico<input id="new-user" type="email" required placeholder="persona@empresa.com"></label><label>Nombre<input id="new-name" required placeholder="Nombre a mostrar"></label><label>Permiso<select id="new-role"><option value="viewer">Visualizador</option><option value="admin">Administrador</option></select></label><button class="btn" type="submit">Invitar usuario</button></form><p id="user-error" class="error" role="status"></p></section><section class="stats"><div class="stat"><small>Total</small><b id="total"></b></div><div class="stat"><small>Por empezar</small><b id="nstart"></b></div><div class="stat"><small>En proceso</small><b id="nprogress"></b></div><div class="stat"><small>Terminado</small><b id="ndone"></b></div></section><nav class="toolbar"><button class="btn admin-only" id="add">+ Agregar actividad</button><input id="search" placeholder="Buscar actividad"><button class="btn secondary admin-only" id="save">Guardar cambios</button><button class="btn secondary admin-only" id="backup">Exportar respaldo JSON</button><button class="btn secondary admin-only" id="import">Importar respaldo</button><input type="file" id="importfile" accept="application/json,.json" hidden><button class="btn" id="pdf">Reporte de actividades (PDF)</button><button class="btn" id="pdf-timeline">Cronograma (PDF horizontal)</button></nav><section class="timeline-panel"><h2>Línea de tiempo · Cronograma semanal</h2><p class="muted">Tarjetas naranja/rojo: por empezar · Verde: terminado · Barra de avance · Extensión roja: días adicionales hasta la compleción real · Línea verde: hoy · ◆: fecha real de compleción. Selecciona una actividad para ir a su tarjeta.</p><div style="display:flex;gap:8px;align-items:center;margin:8px 0"><button class="btn secondary" id="timeline-mode" type="button">Vista compacta</button><span class="muted">Vista completa / minimizada</span></div><div class="timeline-scroll" id="timeline"></div></section><div class="columns" id="board"></div><p class="foot">Los cambios se guardan en la base de datos compartida. Los anexos se guardan en el almacenamiento privado en línea. El respaldo JSON incluye solo referencias a archivos, no su contenido.</p></main><div class="modal" id="modal" hidden><div class="modal-box"><h2 id="modal-title"></h2><p id="modal-help"></p><form id="modal-form"><div id="modal-fields" class="stack"></div><p id="modal-error" class="error"></p><div class="modal-actions"><button type="button" class="btn secondary" id="modal-cancel">Cerrar</button><button type="submit" class="btn">Guardar</button></div></form></div></div>
+<script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script><script src="./dydem.js"></script></body></html>
