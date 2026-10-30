@@ -77,7 +77,7 @@ function connectionConfig(){const cfg=window.DYDEM_CONFIG||{};if(!cfg.url||!/^ht
 function showSetupError(){const el=$('access-error');$('access-help').textContent='La instalación todavía no está conectada a Supabase.';el.textContent='Configura site/config.js con la URL y la clave pública del proyecto. Después publica el sitio por HTTPS. Consulta INSTRUCCIONES.md.';$('access-submit').disabled=true}
 function enterAccount(profile){currentAccount={...profile,name:profile.display_name||profile.email||'Usuario'};$('add').hidden=!canAddActivity();$('save').hidden=!canEditAnyStep();document.body.classList.add('signed-in');document.body.classList.toggle('viewer-mode',!isAdmin()&&!isCustom());document.body.classList.toggle('custom-mode',isCustom());if(recoverMode)showRecoveryForm();else {$('access-gate').hidden=true;$('reset-container').hidden=true;}$('session-label').textContent=currentAccount.name+' · '+roleLabel(currentAccount.role);$('manage-users').hidden=!isAdmin();$('user-management').hidden=true;render();}
 async function loadAccount(){const {data:sessionData,error:sessionError}=await cloud.auth.getSession();if(sessionError)throw sessionError;const user=sessionData.session?.user;if(!user){await leaveAccount(false);return}const {data:profile,error}=await cloud.from('profiles').select('id,email,display_name,role,permissions,active').eq('id',user.id).single();if(error||!profile||!profile.active){await cloud.auth.signOut();throw Error('Esta cuenta no tiene acceso activo a DYDEM. Consulta a un administrador.')}enterAccount(profile);await reloadActivities(true);startRealtime();if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
-async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;tasks=[];commentsByActivity.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');$('access-gate').hidden=false;$('user-management').hidden=true;$('access-pass').value='';render();syncState('Sin sesión')}
+async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;tasks=[];commentsByActivity.clear();pendingAttachmentIntents.clear();pendingFileRegistrations.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');$('access-gate').hidden=false;$('user-management').hidden=true;$('access-pass').value='';render();syncState('Sin sesión')}
 function isDirty(){return tasks.some(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)))}
 async function reloadComments(){
  if(!isSignedIn())return;
@@ -93,7 +93,7 @@ async function reloadComments(){
  }
  commentsByActivity=next;
 }
-async function reloadActivities(force=false){if(!isSignedIn())return;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}syncState('Actualizando…',false,true);const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',PROJECT_ID).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}await reloadComments();tasks=(data||[]).map(r=>migrate({...r.data,id:Number(r.id)}));if(!collapsePreferencesInitialized){const saved=storeGet(COLLAPSE_KEY);if(saved===null){tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed()}collapsePreferencesInitialized=true}lastSynced=new Map(tasks.map(t=>[Number(t.id),JSON.stringify(t)]));revisions=new Map(data.map(r=>[Number(r.id),r.revision]));render();syncState('Actualizado');refreshQueued=false}
+async function reloadActivities(force=false){if(!isSignedIn())return;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}syncState('Actualizando…',false,true);try{await reconcileAttachmentIntents()}catch(err){console.warn('Pendientes de Documentado:',messageError(err))}const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',PROJECT_ID).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}await reloadComments();tasks=(data||[]).map(r=>migrate({...r.data,id:Number(r.id)}));if(!collapsePreferencesInitialized){const saved=storeGet(COLLAPSE_KEY);if(saved===null){tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed()}collapsePreferencesInitialized=true}lastSynced=new Map(tasks.map(t=>[Number(t.id),JSON.stringify(t)]));revisions=new Map(data.map(r=>[Number(r.id),r.revision]));render();syncState('Actualizado');refreshQueued=false}
 function scheduleCloudRefresh(){if(refreshDelay)clearTimeout(refreshDelay);refreshDelay=setTimeout(()=>{refreshDelay=null;reloadActivities().catch(e=>syncState('No se pudo sincronizar',true))},450)}
 function startRealtime(){if(subscription){cloud.removeChannel(subscription);subscription=null}subscription=cloud.channel('dydem-obra-shared').on('postgres_changes',{event:'*',schema:'public',table:'activities',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'INSERT',schema:'public',table:'activity_comments',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'DELETE',schema:'public',table:'activity_comments'},()=>scheduleCloudRefresh()).subscribe();if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(isSignedIn())reloadActivities().catch(()=>syncState('Error de actualización',true))},15000)}
 async function save(){if(!canEditAnyStep())return;savePending=true;if(saveBusy)return;saveBusy=true;syncState('Guardando…',false,true);
@@ -601,18 +601,23 @@ function requiredDates(t){return !!t.start&&!!t.end&&t.end>=t.start}
 function missing(){return tasks.filter(t=>!requiredDates(t)||t.steps[1]&&!t.reviewers.trim()||t.steps[2]&&!t.authorizer.trim()||t.steps[6]&&!t.completedDate)}
 function startup(){const incomplete=missing();if(!incomplete.length)return;const fields=incomplete.map(t=>`<fieldset style="border:1px solid #dce3ed;border-radius:8px"><legend>#${t.id} — ${esc(t.title.slice(0,75))}</legend><div class="row">${!requiredDates(t)?`<div class="field"><label>Inicio tentativo *</label><input type="date" name="start-${t.id}" value="${esc(t.start)}" required></div><div class="field"><label>Final tentativo *</label><input type="date" name="end-${t.id}" value="${esc(t.end)}" required></div>`:''}${t.steps[1]&&!t.reviewers.trim()?`<div class="field"><label>Personas que revisaron *</label><input name="reviewers-${t.id}" required></div>`:''}${t.steps[2]&&!t.authorizer.trim()?`<div class="field"><label>Persona que autorizó *</label><input name="authorizer-${t.id}" required></div>`:''}${t.steps[6]&&!t.completedDate?`<div class="field"><label>Fecha de compleción *</label><input type="date" name="completedDate-${t.id}" required></div>`:''}</div></fieldset>`).join('');modal('Completar datos obligatorios',`Hay ${incomplete.length} actividad(es) con datos obligatorios pendientes. Puedes cerrar y completarlos después; no se marcarán las etapas correspondientes hasta cumplir sus requisitos.`,fields,{type:'startup',ids:incomplete.map(t=>t.id)})}
 function editStep(t,i){if(!canEditStep(i))return;if(i===1)modal(`Revisión · Actividad ${t.id}`,'Indica las personas que realizaron la revisión. El código de anexo es opcional.',`<div class="field"><label>Nombre(s) de revisores *</label><textarea name="reviewers" required>${esc(t.reviewers)}</textarea></div><div class="field"><label>Código de anexo (opcional)</label><input name="reviewAnnex" value="${esc(t.reviewAnnex)}"></div>`,{type:'edit',id:t.id,step:i});if(i===2)modal(`Autorización · Actividad ${t.id}`,'Indica quién autorizó la actividad.',`<div class="field"><label>Nombre de quien autorizó *</label><input name="authorizer" value="${esc(t.authorizer)}" required></div>`,{type:'edit',id:t.id,step:i});if(i===5)modal(`Documentación · Actividad ${t.id}`,'Agrega imágenes, videos, documentos y otros anexos. Se almacenan en la nube y se comparten con el equipo.',`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple><p class="attachment-upload-help">Máximo de DYDEM: 500 MB por archivo. El almacenamiento actual de Supabase admite hasta 50 MB por archivo. Las cargas mayores de 6 MB utilizan transferencia reanudable.</p><span id="attachment-upload-status" role="status"></span></div><div id="attachment-list">${attachmentList(t)}</div>`,{type:'files',id:t.id,step:i})}
-function attachmentList(t){return t.attachments.map(a=>`<div class="attachment">${attachmentActions(t,a)}<button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button></div>`).join('')||'<span class="muted">No hay archivos adjuntos.</span>'}
+function attachmentList(t){
+ const files=t.attachments.map(a=>`<div class="attachment">${attachmentActions(t,a)}<button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button></div>`).join('');
+ const pending=pendingForActivity(t.id).map(a=>`<div class="attachment pending-attachment"><span class="pending-attachment-info">⏳ <b>${esc(a.file_name)}</b><small> Pendiente: ${a.last_error?'No se pudo confirmar.':'Se recuperará automáticamente cuando esté completo.'} ${esc(a.last_error||'')}</small></span><button type="button" class="btn secondary" data-recover-upload="${esc(a.id)}" data-id="${t.id}">Comprobar</button></div>`).join('');
+ return (files+pending)||'<span class="muted">No hay archivos adjuntos.</span>';
+}
 function canCheck(t,i){if(i>0&&!t.steps[i-1]&&!(i===6&&t.steps[4]))return 'Completa primero la etapa anterior.';if(i===0&&!requiredDates(t))return 'Completa las fechas tentativas de inicio y final.';if(i===1&&!t.reviewers.trim())return 'Introduce al menos un nombre de revisor.';if(i===2&&!t.authorizer.trim())return 'Introduce el nombre de quien autorizó.';if(i===3&&t.progress!==100)return 'El avance de obra debe llegar al 100 %.';if(i===4&&t.verification!==100)return 'La verificación debe llegar al 100 %.';if(i===6&&!t.completedDate)return 'Indica la fecha de compleción.';if(i===6&&t.before&&task(t.before)&&!task(t.before).steps[6])return 'La actividad anterior enlazada debe estar completada.';return ''}
 function autoCheck(t,i){if(!canCheck(t,i))t.steps[i]=true}
 function uncheck(t,i){if(isCustom()){t.steps[i]=false;return}if(i===5){t.steps[5]=false;return}for(let j=i;j<7;j++)t.steps[j]=false}
 function linkError(t,field,value){if(!value)return '';if(String(value)===String(t.id))return 'No se puede enlazar una actividad consigo misma.';if(field==='before'&&String(t.after)===String(value)||field==='after'&&String(t.before)===String(value))return 'Las dos dependencias no pueden apuntar a la misma actividad.';let next=task(value),seen=new Set([t.id]);while(next){if(seen.has(next.id))return 'Esta relación crearía un ciclo de dependencias.';seen.add(next.id);next=task(field==='before'?next.before:next.after)}return ''}
 // Storage privado de Supabase. metadata.path pertenece al bucket; nunca al navegador.
-async function putFile(t,file){
+async function putFile(t,file,intent){
  if(!canEditStep(5))throw Error('Sin permisos para adjuntar archivos');
  if(file.size>MAX_ATTACHMENT_BYTES)throw Error('No se permite subir archivos de más de 500 MB.');
  if(file.size>CURRENT_STORAGE_LIMIT_BYTES)throw Error('El archivo supera los 50 MB permitidos actualmente por el almacenamiento de Supabase. El máximo de la aplicación es 500 MB, pero el proyecto requiere ampliar su límite de Storage.');
- const id=crypto.randomUUID(),name=file.name.replace(/[^a-zA-Z0-9._-]+/g,'_').slice(-100)||'anexo';
- const path=`${PROJECT_ID}/${t.id}/${id}/${name}`;
+ if(!intent?.id||!intent?.path)throw Error('Falta el registro previo de la carga');
+ const {id,path}=intent;
+ const name=file.name;
  const report=msg=>{const el=$('attachment-upload-status');if(el)el.textContent=msg};
  report('Subiendo '+file.name+'…');
  if(file.size<=6*1024*1024){
@@ -649,19 +654,94 @@ async function putFile(t,file){
 }
 
 const pendingFileRegistrations=new Map();
+let pendingAttachmentIntents=new Map();
+let attachmentRecoveryRunning=false;
+function pendingForActivity(id){return pendingAttachmentIntents.get(Number(id))||[]}
+function addPendingIntent(intent){
+ const id=Number(intent.activity_id);
+ const list=pendingForActivity(id).filter(x=>x.id!==intent.id);
+ list.push(intent);pendingAttachmentIntents.set(id,list);
+}
+function forgetPendingIntent(intentId,activityId){
+ const id=Number(activityId);
+ const left=pendingForActivity(id).filter(x=>x.id!==intentId);
+ if(left.length)pendingAttachmentIntents.set(id,left);else pendingAttachmentIntents.delete(id);
+}
+async function reconcileAttachmentIntents(){
+ if(!isSignedIn()||attachmentRecoveryRunning)return;
+ attachmentRecoveryRunning=true;
+ try{
+  const {data,error}=await cloud.from('activity_upload_intents')
+    .select('id,activity_id,file_name,file_size,mime_type,storage_path,created_at')
+    .eq('uploaded_by',currentAccount.id).eq('status','pending')
+    .order('created_at',{ascending:true});
+  if(error)throw error;
+  const outstanding=new Map(),repaired=[];
+  for(const intent of data||[]){
+   let completed=null;
+   try{
+    const result=await cloud.rpc('complete_activity_upload',{p_upload_id:intent.id});
+    if(result.error)throw result.error;
+    completed=result.data;
+   }catch(err){
+    // Do not lose the intent if Storage or the data API is temporarily unreachable.
+    intent.last_error=messageError(err);
+   }
+   if(completed?.status==='linked'){repaired.push(intent.id);continue}
+   const id=Number(intent.activity_id),items=outstanding.get(id)||[];
+   items.push(intent);outstanding.set(id,items);
+  }
+  // Preserve newly-created intents while an upload started during a refresh.
+  for(const [id,items] of pendingAttachmentIntents){
+   for(const item of items){
+    if(repaired.includes(item.id))continue;
+    if(!outstanding.has(id))outstanding.set(id,[]);
+    if(!outstanding.get(id).some(x=>x.id===item.id))outstanding.get(id).push(item);
+   }
+  }
+  pendingAttachmentIntents=outstanding;
+  if(repaired.length)syncState('Se recuperaron '+repaired.length+' anexo(s) pendientes');
+ }finally{attachmentRecoveryRunning=false}
+}
+
 function pendingUploadKey(t,file){return [t.id,file.name,file.size,file.lastModified].join('::')}
-async function confirmUploadedAttachment(t,meta){
- const id=Number(t.id);
- const {data,error}=await cloud.rpc('attach_activity_file',{p_activity_id:id,p_file:meta});
- if(error)throw error;
- if(!data||!data.data||!Number.isInteger(Number(data.revision)))throw Error('El servidor no confirmó la referencia del archivo');
- const next=migrate({...data.data,id});
- Object.assign(t,next);
- revisions.set(id,Number(data.revision));
+function applyAttachmentServerData(activityId,data,revision){
+ const id=Number(activityId),next=migrate({...data,id});
+ const index=tasks.findIndex(a=>Number(a.id)===id);
+ if(index>=0)tasks[index]=next;
+ revisions.set(id,Number(revision));
  lastSynced.set(id,JSON.stringify(next));
  const list=$('attachment-list');
- if(list)list.innerHTML=attachmentList(t);
- syncState('Anexo guardado');
+ if(list&&active?.type==='files'&&Number(active.id)===id)list.innerHTML=attachmentList(next);
+ return next;
+}
+async function prepareAttachmentUpload(t,file){
+ const available=pendingForActivity(t.id).find(a=>a.file_name===file.name&&Number(a.file_size)===file.size);
+ if(available)return {id:available.id,path:available.storage_path,activity_id:t.id,
+  name:available.file_name,size:Number(available.file_size),type:available.mime_type};
+ const uploadId=crypto.randomUUID();
+ const safeName=file.name.replace(/[^a-zA-Z0-9._-]+/g,'_').slice(-100)||'anexo';
+ const {data,error}=await cloud.rpc('begin_activity_upload',{
+  p_activity_id:Number(t.id),p_upload_id:uploadId,p_file_name:file.name,
+  p_storage_name:safeName,p_file_size:file.size,p_mime_type:file.type||'application/octet-stream'
+ });
+ if(error)throw error;
+ if(!data?.id||!data.path)throw Error('No se pudo crear el registro previo del archivo');
+ addPendingIntent({id:data.id,activity_id:Number(t.id),file_name:data.name,
+  file_size:data.size,mime_type:data.type,storage_path:data.path,created_at:new Date().toISOString()});
+ const list=$('attachment-list');if(list)list.innerHTML=attachmentList(task(t.id)||t);
+ return data;
+}
+async function confirmUploadedAttachment(t,intent){
+ const id=Number(t.id);
+ const {data,error}=await cloud.rpc('complete_activity_upload',{p_upload_id:intent.id});
+ if(error)throw error;
+ if(data?.status!=='linked'||!data.data||!Number.isInteger(Number(data.revision)))
+  throw Error('El archivo aún está pendiente de confirmación en Supabase');
+ forgetPendingIntent(intent.id,id);
+ pendingFileRegistrations.delete(intent.id);
+ const next=applyAttachmentServerData(id,data.data,data.revision);
+ syncState('Anexo guardado y verificado');
  return next;
 }
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
@@ -779,24 +859,69 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
   if(isDirty())throw Error('Hay cambios de actividades pendientes. Guárdalos antes de cargar anexos.');
  }
  for(const file of files){
-  const key=pendingUploadKey(t,file);
-  let uploaded=pendingFileRegistrations.get(key);
-  if(!uploaded){
-   uploaded=await putFile(t,file);
-   pendingFileRegistrations.set(key,uploaded);
-  }
+  const current=task(active.id)||t;
   const state=$('attachment-upload-status');
-  if(state)state.textContent='Archivo subido; registrándolo en la actividad…';
+  // 1. Create a durable intent BEFORE uploading any bytes.
+  const intent=await prepareAttachmentUpload(current,file);
+  if(state)state.textContent='Verificando carga anterior: '+file.name;
+  let complete=null;
   try{
-   await confirmUploadedAttachment(t,uploaded);
-   pendingFileRegistrations.delete(key);
-  }catch(error){
-   throw Error('El archivo se subió, pero no pudo asociarse a la actividad. Conserva esta pestaña y pulsa Guardar de nuevo para reintentar sin volver a subirlo. Detalle: '+messageError(error));
+   const result=await cloud.rpc('complete_activity_upload',{p_upload_id:intent.id});
+   if(result.error)throw result.error;
+   complete=result.data;
+  }catch(err){if(state)state.textContent='Se comprobará al terminar: '+messageError(err)}
+  if(complete?.status!=='linked'){
+   // 2. Upload once. The durable intent survives a refresh or connection failure.
+   if(state)state.textContent='Cargando '+file.name+'…';
+   await putFile(current,file,intent);
   }
-  if(state)state.textContent='Archivo registrado: '+file.name;
+  // 3. Register and verify the reference BEFORE telling the user it is saved.
+  if(state)state.textContent='Guardando y verificando referencia: '+file.name;
+  try{
+   await confirmUploadedAttachment(task(active.id)||current,intent);
+  }catch(error){
+   throw Error('La carga quedó pendiente en Supabase y NO se perderá. Abre nuevamente Documentado para recuperarla o pulsa «Comprobar». '+messageError(error));
+  }
+  if(state)state.textContent='Archivo registrado y verificado: '+file.name;
  }
 }if(err){$('modal-error').textContent=err;return}await save();if(isDirty()){$('modal-error').textContent='Hay cambios pendientes; pulsa Guardar para reintentar antes de cerrar.';return}attachmentUploadBusy=false;close()}catch(ex){$('modal-error').textContent='No se pudo guardar: '+ex.message}finally{attachmentUploadBusy=false;if(submitButton)submitButton.disabled=false}};
-$('modal-fields').addEventListener('click',async e=>{let b=e.target.closest('button[data-remove-file]');if(!b||!canEditStep(5))return;let t=task(b.dataset.id),id=b.dataset.removeFile;if(!confirm('¿Quitar este anexo?'))return;const meta=t.attachments.find(a=>a.id===id);t.attachments=t.attachments.filter(a=>a.id!==id);if(!t.attachments.length)uncheck(t,5);await save();if(isDirty()){alert('El servidor no confirmó el cambio. El archivo sigue guardado en la nube.');return}try{await deleteFile(meta)}catch(err){alert('Se quitó la referencia al archivo, pero no pudo eliminarse de Storage. Solicita a un administrador que revise los archivos huérfanos. '+messageError(err))}$('attachment-list').innerHTML=attachmentList(t)});
+$('modal-fields').addEventListener('click',async e=>{
+ const recovery=e.target.closest('button[data-recover-upload]');
+ if(recovery){
+  if(!canEditStep(5))return;
+  recovery.disabled=true;
+  try{
+   const {data,error}=await cloud.rpc('complete_activity_upload',{p_upload_id:recovery.dataset.recoverUpload});
+   if(error)throw error;
+   if(data?.status==='linked'){
+    forgetPendingIntent(recovery.dataset.recoverUpload,recovery.dataset.id);
+    applyAttachmentServerData(recovery.dataset.id,data.data,data.revision);
+    $('modal-error').textContent='Anexo recuperado correctamente.';
+   }else $('modal-error').textContent='El archivo todavía no está completo en Storage. Selecciónalo nuevamente para continuar la carga.';
+   const current=task(recovery.dataset.id);
+   if(current)$('attachment-list').innerHTML=attachmentList(current);
+  }catch(err){$('modal-error').textContent='No se pudo recuperar: '+messageError(err)}
+  finally{recovery.disabled=false}
+  return;
+ }
+ const button=e.target.closest('button[data-remove-file]');
+ if(!button||!canEditStep(5)||attachmentUploadBusy)return;
+ const t=task(button.dataset.id),fileId=button.dataset.removeFile;
+ if(!t||!confirm('¿Quitar este anexo de la actividad?'))return;
+ button.disabled=true;
+ try{
+  const {data,error}=await cloud.rpc('remove_activity_file',{p_activity_id:Number(t.id),p_file_id:fileId});
+  if(error)throw error;
+  if(!data?.data)throw Error('No se confirmó la eliminación');
+  applyAttachmentServerData(t.id,data.data,data.revision);
+  if(data.removed_file?.path){
+   try{await deleteFile(data.removed_file)}
+   catch(error){alert('Se quitó la referencia, pero el archivo aún debe eliminarse de Storage: '+messageError(error))}
+  }
+  $('modal-error').textContent='Anexo eliminado correctamente.';
+ }catch(err){$('modal-error').textContent='No se pudo quitar el anexo: '+messageError(err)}
+ finally{button.disabled=false}
+});
 document.addEventListener('click',async e=>{
  const open=e.target.closest('[data-preview]');
  if(open){
