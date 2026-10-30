@@ -325,7 +325,17 @@ let attachmentPreviewSequence=0;
 let attachmentUploadBusy=false;
 function attachmentSize(n){return n>1024*1024?(n/(1024*1024)).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':(n||0)+' bytes'}
 function attachmentActions(t,a){
- return `<span class="attachment-actions"><span class="attachment-filename">${esc(a.name)}</span>${Number.isFinite(a.size)?`<small>${attachmentSize(a.size)}</small>`:''}<button type="button" class="btn secondary attachment-preview-button" data-preview="${esc(a.id)}" data-id="${t.id}" title="Ver archivo">Vista previa</button><button type="button" class="btn secondary attachment-download-button" data-download="${esc(a.id)}" data-id="${t.id}" title="Descargar archivo">Descargar</button></span>`;
+ const kind=attachmentFileKind(a);
+ const types={
+  image:{icon:'🖼️',label:'Imagen'},
+  pdf:{icon:'📕',label:'Documento PDF'},
+  video:{icon:'🎞️',label:'Video'},
+  audio:{icon:'🎵',label:'Audio'},
+  text:{icon:'📝',label:'Documento de texto'},
+  unsupported:{icon:'📎',label:'Archivo adjunto'}
+ };
+ const type=types[kind]||types.unsupported;
+ return `<button type="button" class="attachment-file attachment-file-${kind}" data-preview="${esc(a.id)}" data-id="${t.id}" aria-label="Abrir ${esc(type.label)}: ${esc(a.name)}" title="Abrir archivo: ${esc(a.name)}"><span class="attachment-file-icon" aria-hidden="true">${type.icon}</span><span class="attachment-file-name">${esc(a.name)}</span></button>`;
 }
 function attachmentFileKind(meta){
  const name=String(meta?.name||'').toLowerCase(),type=String(meta?.type||'').toLowerCase();
