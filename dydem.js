@@ -316,8 +316,120 @@ function viewerLinkedActivity(value){
  const linked=task(value);
  return linked?`${linked.annex} · ${linked.title}`:`Actividad ${value}`;
 }
+
+const MAX_ATTACHMENT_BYTES=500*1024*1024;
+// Límite actual comprobado del bucket en Supabase: 50 MiB. Aumentarlo requiere configuración del plan.
+const CURRENT_STORAGE_LIMIT_BYTES=50*1024*1024;
+const attachmentAssets=new Map();
+let attachmentPreviewSequence=0;
+let attachmentUploadBusy=false;
+function attachmentSize(n){return n>1024*1024?(n/(1024*1024)).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':(n||0)+' bytes'}
+function attachmentActions(t,a){
+ return `<span class="attachment-actions"><span class="attachment-filename">${esc(a.name)}</span>${Number.isFinite(a.size)?`<small>${attachmentSize(a.size)}</small>`:''}<button type="button" class="btn secondary attachment-preview-button" data-preview="${esc(a.id)}" data-id="${t.id}" title="Ver archivo">Vista previa</button><button type="button" class="btn secondary attachment-download-button" data-download="${esc(a.id)}" data-id="${t.id}" title="Descargar archivo">Descargar</button></span>`;
+}
+function attachmentFileKind(meta){
+ const name=String(meta?.name||'').toLowerCase(),type=String(meta?.type||'').toLowerCase();
+ if(type.startsWith('image/')||/\.(png|jpe?g|gif|webp|bmp|avif|svg)$/.test(name))return 'image';
+ if(type==='application/pdf'||/\.pdf$/.test(name))return 'pdf';
+ if(type.startsWith('video/')||/\.(mp4|mov|webm|m4v|ogg|ogv)$/.test(name))return 'video';
+ if(type.startsWith('audio/')||/\.(mp3|m4a|wav|opus|flac)$/.test(name))return 'audio';
+ if((type.startsWith('text/')||/\.(txt|csv|md|log|json|xml)$/.test(name))&&(!meta.size||meta.size<=1024*1024))return 'text';
+ return 'unsupported';
+}
+function ensureCloudFile(meta){
+ if(!isSignedIn())throw Error('Inicia sesión para acceder a los archivos');
+ if(!meta?.path)throw Error('Este anexo no está disponible en la nube. Solicita que se vuelva a cargar el original.');
+ if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('La referencia del archivo no pertenece a esta obra');
+}
+async function signedAttachmentUrl(meta){
+ ensureCloudFile(meta);
+ const {data,error}=await cloud.storage.from('activity-attachments').createSignedUrl(meta.path,600);
+ if(error||!data?.signedUrl)throw error||Error('No se pudo generar el acceso temporal al archivo');
+ return data.signedUrl;
+}
+function loadAttachmentLibrary(name,src){
+ if(window[name])return Promise.resolve(window[name]);
+ if(attachmentAssets.has(name))return attachmentAssets.get(name);
+ const loader=new Promise((resolve,reject)=>{
+  const script=document.createElement('script');
+  script.src=src;script.async=true;
+  script.onload=()=>window[name]?resolve(window[name]):reject(Error('El visor no está disponible'));
+  script.onerror=()=>reject(Error('No se pudo cargar el componente de vista previa. Puedes descargar el archivo.'));
+  document.head.appendChild(script);
+ });
+ attachmentAssets.set(name,loader);
+ loader.catch(()=>attachmentAssets.delete(name));
+ return loader;
+}
+function closeAttachmentPreview(){
+ attachmentPreviewSequence++;
+ const box=$('attachment-preview');
+ if(!box)return;
+ box.querySelectorAll('video,audio').forEach(el=>{try{el.pause();el.removeAttribute('src');el.load()}catch(_){}});
+ $('attachment-preview-body').replaceChildren();
+ box.hidden=true;
+}
+async function previewAttachment(t,meta){
+ if(!t||!meta)return;
+ const request=++attachmentPreviewSequence;
+ const modal=$('attachment-preview'),body=$('attachment-preview-body'),note=$('attachment-preview-note');
+ modal.hidden=false;
+ $('attachment-preview-title').textContent=meta.name||'Archivo adjunto';
+ $('attachment-preview-download').dataset.download=meta.id;
+ $('attachment-preview-download').dataset.id=String(t.id);
+ body.replaceChildren();
+ note.textContent='Cargando vista previa…';
+ const showFailure=()=>{if(request!==attachmentPreviewSequence)return;body.replaceChildren();const p=document.createElement('p');p.className='preview-unavailable';p.textContent='No se puede abrir una vista previa de este archivo. Puedes descargarlo.';body.appendChild(p);note.textContent='Vista previa no disponible.'};
+ const kind=attachmentFileKind(meta);
+ if(kind==='unsupported'){showFailure();return}
+ try{
+  const url=await signedAttachmentUrl(meta);
+  if(request!==attachmentPreviewSequence)return;
+  if(kind==='image'){
+   const img=document.createElement('img');img.className='preview-image';img.alt='Vista previa de '+meta.name;
+   img.onerror=showFailure;img.src=url;body.appendChild(img);
+   note.textContent='Imagen original. Archivo disponible para descargar.';
+  }else if(kind==='pdf'){
+   const lib=await loadAttachmentLibrary('pdfjsLib','https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js');
+   if(request!==attachmentPreviewSequence)return;
+   lib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+   const pdf=await lib.getDocument({url,rangeChunkSize:131072}).promise;
+   try{
+    if(request!==attachmentPreviewSequence)return;
+    const page=await pdf.getPage(1),base=page.getViewport({scale:1});
+    const scale=Math.min(1.75,Math.max(.35,850/base.width));
+    const viewport=page.getViewport({scale}),canvas=document.createElement('canvas');
+    const ratio=Math.min(window.devicePixelRatio||1,1.5);
+    canvas.width=Math.round(viewport.width*ratio);canvas.height=Math.round(viewport.height*ratio);
+    canvas.style.width=Math.round(viewport.width)+'px';canvas.style.height=Math.round(viewport.height)+'px';
+    canvas.className='preview-pdf-canvas';
+    await page.render({canvasContext:canvas.getContext('2d'),viewport,transform:ratio!==1?[ratio,0,0,ratio,0,0]:null}).promise;
+    if(request===attachmentPreviewSequence){body.replaceChildren(canvas);note.textContent='Primera página del PDF. Descarga el archivo para consultar todas las páginas.'}
+   }finally{await pdf.destroy()}
+  }else if(kind==='video'){
+   const video=document.createElement('video');
+   video.controls=true;video.playsInline=true;video.preload='metadata';
+   video.className='preview-video';video.src=url;
+   video.onseeking=()=>{if(video.currentTime>30)video.currentTime=30};
+   video.ontimeupdate=()=>{if(video.currentTime>=30){video.pause();video.currentTime=30;note.textContent='Vista previa finalizada (30 segundos). Descarga el video para verlo completo.'}};
+   video.onplay=()=>{if(video.currentTime>=30)video.currentTime=0};
+   video.onerror=showFailure;
+   body.appendChild(video);
+   note.textContent='Video: reproducción limitada a los primeros 30 segundos.';
+  }else if(kind==='audio'){
+   const audio=document.createElement('audio');audio.controls=true;audio.preload='metadata';audio.src=url;audio.onerror=showFailure;body.appendChild(audio);
+   note.textContent='Audio disponible para escuchar o descargar.';
+  }else if(kind==='text'){
+   const file=await getFile(meta);
+   if(request!==attachmentPreviewSequence)return;
+   if(file.size>1024*1024){showFailure();return}
+   const pre=document.createElement('pre');pre.className='preview-text';pre.textContent=(await file.text()).slice(0,25000);body.appendChild(pre);
+   note.textContent='Vista previa de texto (primeros 25,000 caracteres).';
+  }
+ }catch(err){if(request!==attachmentPreviewSequence)return;showFailure();note.textContent='No se puede abrir la vista previa: '+messageError(err)}
+}
 function viewerAttachmentLinks(t){
- return t.attachments.length?t.attachments.map(a=>`<a class="inline-download" href="#" data-download="${esc(a.id)}" data-id="${t.id}">${esc(a.name)}</a>`).join(' '):'<span class="muted">Sin anexos adjuntos</span>';
+ return t.attachments.length?t.attachments.map(a=>attachmentActions(t,a)).join(' '):'<span class="muted">Sin anexos adjuntos</span>';
 }
 function viewerCard(t){
  const state=status(t),stateClass=state==='Por empezar'?'status-pending':state==='Terminado'?'status-finished':'status-active';
@@ -422,7 +534,7 @@ function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=nam
 if(i===1)detail=`<div class="detail">Revisores: ${esc(t.reviewers||'Pendiente')}\nAnexo de diagramas/especificaciones/materiales: ${esc(t.reviewAnnex||'Sin código')}</div>`;
 if(i===2)detail=`<div class="detail">Autorizó: ${esc(t.authorizer||'Pendiente')}</div>`;
 if(i===3||i===4){let v=i===3?t.progress:t.verification;detail=`<div class="row" style="margin-top:6px"><span class="muted">${i===3?'Avance de obra':'Verificación'}</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="${i===3?'progress':'verification'}" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
-if(i===5)detail=`<div class="detail">${t.attachments.length?t.attachments.map(a=>`<a class="inline-download" href="#" data-download="${esc(a.id)}" data-id="${t.id}">${esc(a.name)}</a>`).join(''):'Sin anexos'}</div>`;
+if(i===5)detail=`<div class="detail">${viewerAttachmentLinks(t)}</div>`;
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
 return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${canEdit?'':'disabled'} ${t.steps[i]?'checked':''}>${i+1}. ${n}${i===5?' (opcional)':''}</label><details><summary>Ver / editar datos</summary>${detail}${[1,2,5].includes(i)&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">${i===5?'Gestionar anexos':'Editar datos'}</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}</div></article>`}
 let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='edit'&&canEditStep(action.step))&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';$('modal').hidden=false;}
@@ -432,13 +544,52 @@ function requiredDates(t){return !!t.start&&!!t.end&&t.end>=t.start}
 function missing(){return tasks.filter(t=>!requiredDates(t)||t.steps[1]&&!t.reviewers.trim()||t.steps[2]&&!t.authorizer.trim()||t.steps[6]&&!t.completedDate)}
 function startup(){const incomplete=missing();if(!incomplete.length)return;const fields=incomplete.map(t=>`<fieldset style="border:1px solid #dce3ed;border-radius:8px"><legend>#${t.id} — ${esc(t.title.slice(0,75))}</legend><div class="row">${!requiredDates(t)?`<div class="field"><label>Inicio tentativo *</label><input type="date" name="start-${t.id}" value="${esc(t.start)}" required></div><div class="field"><label>Final tentativo *</label><input type="date" name="end-${t.id}" value="${esc(t.end)}" required></div>`:''}${t.steps[1]&&!t.reviewers.trim()?`<div class="field"><label>Personas que revisaron *</label><input name="reviewers-${t.id}" required></div>`:''}${t.steps[2]&&!t.authorizer.trim()?`<div class="field"><label>Persona que autorizó *</label><input name="authorizer-${t.id}" required></div>`:''}${t.steps[6]&&!t.completedDate?`<div class="field"><label>Fecha de compleción *</label><input type="date" name="completedDate-${t.id}" required></div>`:''}</div></fieldset>`).join('');modal('Completar datos obligatorios',`Hay ${incomplete.length} actividad(es) con datos obligatorios pendientes. Puedes cerrar y completarlos después; no se marcarán las etapas correspondientes hasta cumplir sus requisitos.`,fields,{type:'startup',ids:incomplete.map(t=>t.id)})}
 function editStep(t,i){if(!canEditStep(i))return;if(i===1)modal(`Revisión · Actividad ${t.id}`,'Indica las personas que realizaron la revisión. El código de anexo es opcional.',`<div class="field"><label>Nombre(s) de revisores *</label><textarea name="reviewers" required>${esc(t.reviewers)}</textarea></div><div class="field"><label>Código de anexo (opcional)</label><input name="reviewAnnex" value="${esc(t.reviewAnnex)}"></div>`,{type:'edit',id:t.id,step:i});if(i===2)modal(`Autorización · Actividad ${t.id}`,'Indica quién autorizó la actividad.',`<div class="field"><label>Nombre de quien autorizó *</label><input name="authorizer" value="${esc(t.authorizer)}" required></div>`,{type:'edit',id:t.id,step:i});if(i===5)modal(`Documentación · Actividad ${t.id}`,'Agrega imágenes, videos, documentos y otros anexos. Se almacenan en la nube y se comparten con el equipo.',`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple></div><div id="attachment-list">${attachmentList(t)}</div>`,{type:'files',id:t.id,step:i})}
-function attachmentList(t){return t.attachments.map(a=>`<div class="attachment"><a href="#" data-download="${esc(a.id)}" data-id="${t.id}">${esc(a.name)}</a><button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button></div>`).join('')||'<span class="muted">No hay archivos adjuntos.</span>'}
+function attachmentList(t){return t.attachments.map(a=>`<div class="attachment">${attachmentActions(t,a)}<button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button></div>`).join('')||'<span class="muted">No hay archivos adjuntos.</span>'}
 function canCheck(t,i){if(i>0&&!t.steps[i-1]&&!(i===6&&t.steps[4]))return 'Completa primero la etapa anterior.';if(i===0&&!requiredDates(t))return 'Completa las fechas tentativas de inicio y final.';if(i===1&&!t.reviewers.trim())return 'Introduce al menos un nombre de revisor.';if(i===2&&!t.authorizer.trim())return 'Introduce el nombre de quien autorizó.';if(i===3&&t.progress!==100)return 'El avance de obra debe llegar al 100 %.';if(i===4&&t.verification!==100)return 'La verificación debe llegar al 100 %.';if(i===6&&!t.completedDate)return 'Indica la fecha de compleción.';if(i===6&&t.before&&task(t.before)&&!task(t.before).steps[6])return 'La actividad anterior enlazada debe estar completada.';return ''}
 function autoCheck(t,i){if(!canCheck(t,i))t.steps[i]=true}
 function uncheck(t,i){if(isCustom()){t.steps[i]=false;return}if(i===5){t.steps[5]=false;return}for(let j=i;j<7;j++)t.steps[j]=false}
 function linkError(t,field,value){if(!value)return '';if(String(value)===String(t.id))return 'No se puede enlazar una actividad consigo misma.';if(field==='before'&&String(t.after)===String(value)||field==='after'&&String(t.before)===String(value))return 'Las dos dependencias no pueden apuntar a la misma actividad.';let next=task(value),seen=new Set([t.id]);while(next){if(seen.has(next.id))return 'Esta relación crearía un ciclo de dependencias.';seen.add(next.id);next=task(field==='before'?next.before:next.after)}return ''}
 // Storage privado de Supabase. metadata.path pertenece al bucket; nunca al navegador.
-async function putFile(t,file){if(!canEditStep(5))throw Error('Sin permisos');const id=crypto.randomUUID();const name=file.name.replace(/[^a-zA-Z0-9._-]+/g,'_').slice(-100)||'anexo';const path=`${PROJECT_ID}/${t.id}/${id}/${name}`;const {error}=await cloud.storage.from('activity-attachments').upload(path,file,{upsert:false,contentType:file.type||'application/octet-stream'});if(error)throw error;return {id,name:file.name,size:file.size,type:file.type,path}}
+async function putFile(t,file){
+ if(!canEditStep(5))throw Error('Sin permisos para adjuntar archivos');
+ if(file.size>MAX_ATTACHMENT_BYTES)throw Error('No se permite subir archivos de más de 500 MB.');
+ if(file.size>CURRENT_STORAGE_LIMIT_BYTES)throw Error('El archivo supera los 50 MB permitidos actualmente por el almacenamiento de Supabase. El máximo de la aplicación es 500 MB, pero el proyecto requiere ampliar su límite de Storage.');
+ const id=crypto.randomUUID(),name=file.name.replace(/[^a-zA-Z0-9._-]+/g,'_').slice(-100)||'anexo';
+ const path=`${PROJECT_ID}/${t.id}/${id}/${name}`;
+ const report=msg=>{const el=$('attachment-upload-status');if(el)el.textContent=msg};
+ report('Subiendo '+file.name+'…');
+ if(file.size<=6*1024*1024){
+  const {error}=await cloud.storage.from('activity-attachments').upload(path,file,{upsert:false,contentType:file.type||'application/octet-stream'});
+  if(error)throw error;
+ }else{
+  // El protocolo TUS evita retransmitir el archivo completo al fallar una conexión móvil.
+  const tus=await loadAttachmentLibrary('tus','https://cdn.jsdelivr.net/npm/tus-js-client@3.1.3/dist/tus.min.js');
+  const {data:{session}}=await cloud.auth.getSession();
+  if(!session?.access_token)throw Error('La sesión expiró. Vuelve a iniciar sesión.');
+  const host=new URL(connectionConfig().url).hostname;
+  const ref=host.split('.')[0];
+  if(!/^[a-z0-9-]+$/.test(ref))throw Error('Proyecto de Storage no válido');
+  await new Promise((resolve,reject)=>{
+   const up=new tus.Upload(file,{
+    endpoint:`https://${ref}.storage.supabase.co/storage/v1/upload/resumable`,
+    headers:{authorization:'Bearer '+session.access_token,'x-upsert':'false'},
+    retryDelays:[0,3000,5000,10000,20000],
+    uploadDataDuringCreation:true,removeFingerprintOnSuccess:true,
+    metadata:{bucketName:'activity-attachments',objectName:path,contentType:file.type||'application/octet-stream',cacheControl:'3600'},
+    chunkSize:6*1024*1024,
+    onError:reject,
+    onProgress:(sent,total)=>report('Subiendo '+file.name+': '+Math.round(sent/Math.max(total,1)*100)+'%'),
+    onSuccess:resolve
+   });
+   up.findPreviousUploads().then(prev=>{
+    if(prev.length)up.resumeFromPreviousUpload(prev[0]);
+    up.start()
+   }).catch(reject);
+  });
+ }
+ report('Archivo subido: '+file.name);
+ return {id,name:file.name,size:file.size,type:file.type,path};
+}
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
 async function deleteFile(meta){if(!canEditStep(5))throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
 $('board').addEventListener('click',async e=>{
@@ -543,7 +694,29 @@ $('board').addEventListener('change',e=>{
 });
 $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||!(isAdmin()||active.type==='edit'&&canEditStep(active.step)||active.type==='files'&&canEditStep(5)))return;let form=new FormData(e.target);let err='';try{if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','reviewers','authorizer','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(active.type==='edit'){let t=task(active.id);if(active.step===1){t.reviewers=String(form.get('reviewers')||'').trim();t.reviewAnnex=String(form.get('reviewAnnex')||'').trim();if(t.reviewers)autoCheck(t,1);if(!t.reviewers)err='Se requiere al menos un nombre de revisor.'}if(active.step===2){t.authorizer=String(form.get('authorizer')||'').trim();if(t.authorizer)autoCheck(t,2);if(!t.authorizer)err='El nombre de quien autorizó es obligatorio.'}}else if(active.type==='files'){let t=task(active.id);let files=$('attachments-input').files;for(let file of files){const uploaded=await putFile(t,file);t.attachments.push(uploaded);autoCheck(t,5)}}if(err){$('modal-error').textContent=err;return}save();close()}catch(ex){$('modal-error').textContent='No se pudo guardar: '+ex.message}};
 $('modal-fields').addEventListener('click',async e=>{let b=e.target.closest('button[data-remove-file]');if(!b||!canEditStep(5))return;let t=task(b.dataset.id),id=b.dataset.removeFile;if(!confirm('¿Quitar este anexo?'))return;const meta=t.attachments.find(a=>a.id===id);t.attachments=t.attachments.filter(a=>a.id!==id);if(!t.attachments.length)uncheck(t,5);await save();if(isDirty()){alert('El servidor no confirmó el cambio. El archivo sigue guardado en la nube.');return}try{await deleteFile(meta)}catch(err){alert('Se quitó la referencia al archivo, pero no pudo eliminarse de Storage. Solicita a un administrador que revise los archivos huérfanos. '+messageError(err))}$('attachment-list').innerHTML=attachmentList(t)});
-document.addEventListener('click',async e=>{let a=e.target.closest('a[data-download]');if(!a)return;e.preventDefault();let t=task(a.dataset.id),meta=t?.attachments.find(x=>x.id===a.dataset.download);if(!meta)return;try{let blob=await getFile(meta);let url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=meta.name;link.click();setTimeout(()=>URL.revokeObjectURL(url),5000)}catch(err){alert('No se pudo descargar: '+messageError(err))}});
+document.addEventListener('click',async e=>{
+ const open=e.target.closest('[data-preview]');
+ if(open){
+  e.preventDefault();const t=task(open.dataset.id),meta=t?.attachments.find(x=>x.id===open.dataset.preview);
+  if(meta)await previewAttachment(t,meta);
+  return;
+ }
+ const a=e.target.closest('[data-download]');
+ if(!a)return;
+ e.preventDefault();
+ const t=task(a.dataset.id),meta=t?.attachments.find(x=>x.id===a.dataset.download);
+ if(!meta)return;
+ try{
+  const signed=await signedAttachmentUrl(meta),url=new URL(signed);
+  url.searchParams.set('download',meta.name||'archivo');
+  const link=document.createElement('a');link.href=url.toString();link.download=meta.name||'archivo';
+  document.body.appendChild(link);link.click();link.remove();
+ }catch(err){alert('No se pudo descargar: '+messageError(err))}
+});
+$('attachment-preview-close').onclick=closeAttachmentPreview;
+$('attachment-preview').addEventListener('click',e=>{if(e.target===$('attachment-preview'))closeAttachmentPreview()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('attachment-preview').hidden)closeAttachmentPreview()});
+
 $('add').onclick=async()=>{if(!canAddActivity())return;let title=prompt('Descripción de la nueva actividad:');if(!title?.trim())return;syncState('Creando actividad…',false,true);const {data,error}=await cloud.rpc('create_activity',{p_title:title.trim()});if(error){syncState('Error al crear',true);alert(messageError(error));return}const id=Number(data.id);collapsedActivities.add(String(id));persistCollapsed();await reloadActivities(true);if(isAdmin())startup()};
 $('search').oninput=render;
 $('save').onclick=async()=>{if(!canEditAnyStep())return;await save();if(!isDirty())alert('Información guardada en DYDEM en línea.')};
