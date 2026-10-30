@@ -437,7 +437,7 @@ function pdfTimeline(){
  // Fit both axes. Compact mode is selected when full-height cards would be too small.
  const pageW=1040,pageH=700;
  const naturalWidth=Math.max(880,days*76);
- const fullHeight=105+tasks.length*108,smallHeight=105+tasks.length*61;
+ const fullHeight=105+tasks.length*54,smallHeight=105+tasks.length*31;
  const fullScale=Math.min(pageW/naturalWidth,pageH/fullHeight);
  const compact=fullScale<0.67 && tasks.length>0;
  const naturalHeight=compact?smallHeight:fullHeight;
@@ -489,6 +489,20 @@ function pdfTimeline(){
  .tl-project-card.tl-finished .tl-card-progress{background:#9edcb6!important}
  .tl-project-card.tl-finished .tl-card-progress>div{background:#15965c!important}
  .tl-compact .tl-project-card.tl-pending{top:13px;height:36px}
+
+ /* Mitad de separación vertical también en el cronograma PDF */
+ .tl-row-ref{height:54px}
+ .tl-project-card,.tl-delay{top:6px;height:40px;padding:3px 6px;border-width:2px}
+ .tl-project-card.tl-pending{top:10px;height:30px}
+ .tl-card-title{font-size:12px;line-height:1.15}
+ .tl-card-percent{font-size:9px;line-height:1.05}
+ .tl-card-progress{height:5px}
+ .tl-project-card.tl-pending .tl-card-percent{display:none}
+ .tl-compact .tl-row-ref{height:31px}
+ .tl-compact .tl-project-card,.tl-compact .tl-delay{top:3px;height:24px;padding:2px 4px;border-width:1px}
+ .tl-compact .tl-project-card.tl-pending{top:5px;height:20px}
+ .tl-compact .tl-card-title{font-size:11px;line-height:1.1}
+ .tl-compact .tl-card-progress{height:4px}
  `;
  printWindow('DYDEM - Cronograma horizontal a color',body,css,true);
 }
