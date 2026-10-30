@@ -211,7 +211,7 @@ $('copy-temporary-password').onclick=async()=>{
   $('user-error').textContent='Selecciona la contraseña temporal y cópiala con Ctrl+C.';
  }
 };
-$('new-custom-permissions').innerHTML=permissionChooser('new',emptyPermissions());
+$('new-custom-permissions').insertAdjacentHTML('beforeend',permissionChooser('new',emptyPermissions()));
 $('new-role').onchange=()=>{$('new-custom-permissions').hidden=$('new-role').value!=='custom'};
 $('user-list').addEventListener('change',e=>{
  const sel=e.target.closest('select[data-edit-role]');
