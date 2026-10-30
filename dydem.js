@@ -637,6 +637,10 @@ async function putFile(t,file,intent){
     headers:{authorization:'Bearer '+session.access_token,'x-upsert':'false'},
     retryDelays:[0,3000,5000,10000,20000],
     uploadDataDuringCreation:true,removeFingerprintOnSuccess:true,
+    // A resume fingerprint must include the exact Storage destination, not only
+    // the local filename: two activities can upload files with identical names.
+    fingerprint:(source,opts)=>Promise.resolve(
+      ['dydem-v2',opts.metadata.objectName,source.name,source.size,source.lastModified||0].join('|')),
     metadata:{bucketName:'activity-attachments',objectName:path,contentType:file.type||'application/octet-stream',cacheControl:'3600'},
     chunkSize:6*1024*1024,
     onError:reject,
