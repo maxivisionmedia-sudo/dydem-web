@@ -245,7 +245,8 @@ function viewerCard(t){
  const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><span>${esc(t.reviewers||'Pendiente')}</span></div><div class="viewer-step"><b>3. Autorizado:</b><span>${esc(t.authorizer||'Pendiente')}</span></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%</span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><span>${verification}%</span></div><div class="viewer-progress"><div style="width:${verification}%"></div></div><div class="viewer-step"><b>6. Documentado (opcional):</b><span>${viewerAttachmentLinks(t)}</span></div><div class="viewer-step"><b>7. Completado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'No'}</span></div></div></details>`;
  return `<article class="task task-viewer ${stateClass} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}</div></article>`;
 }
-function timelineHTML(print=false,compact=false){
+function isMobileTimeline(){return typeof window!=='undefined' && window.matchMedia('(max-width: 760px)').matches}
+function timelineHTML(print=false,compact=false,mobile=isMobileTimeline()&&!print){
  const d=timelineData(),today=new Date(),todayDay=Math.floor(Date.UTC(today.getFullYear(),today.getMonth(),today.getDate())/86400000);
  const dayISO=n=>new Date(n*86400000).toISOString().slice(0,10);
  const dayNames=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
@@ -255,21 +256,21 @@ function timelineHTML(print=false,compact=false){
  const days=Array.from({length:d.total},(_,i)=>{const n=d.lo+i,dt=new Date(n*86400000);return `<div class="tl-day-ref ${Math.floor(i/7)%2===0?'week-blue':'week-white'} ${n===todayDay?'is-today':''}" title="${dayISO(n)}">${dayNames[i%7]} ${String(dt.getUTCDate()).padStart(2,'0')}</div>`}).join('');
  const head=`<div class="tl-head-ref"><div class="tl-weeks-ref">${weeks}</div><div class="tl-days-ref">${days}</div>${todayVisible?`<span class="tl-today-tag" style="left:${pos(todayDay+.5)}%">HOY</span>`:''}</div>`;
  const rows=tasks.map(t=>{
-  const words=t.title.trim().split(/\s+/),title=words.slice(0,6).join(' ')+(words.length>6?'…':'');
+  const words=t.title.trim().split(/\s+/),limit=mobile?4:6,title=words.slice(0,limit).join(' ')+(words.length>limit?'…':'');
   const start=d.valid(t.start)?d.day(t.start):null,end=d.valid(t.end)?d.day(t.end):null,real=d.valid(t.completedDate)?d.day(t.completedDate):null;
   const progress=Math.min(100,Math.max(0,Number(t.progress)||0));
   const projected=start!==null&&end!==null&&end>=start;
   const cardStart=projected?start:(real!==null?real:d.lo),cardEnd=projected?end:cardStart;
   const extended=real!==null&&projected&&real>end;
-  const span=Math.max(1,cardEnd-cardStart+1);
+  const span=Math.max(1,cardEnd-cardStart+1),tiny=mobile&&span===1;
   const label=print?`<span class="tl-annex">${esc(t.annex)}</span><span class="tl-title-text">${esc(title)}</span>`:`<button class="tl-card-link" data-jump="${t.id}" title="Ir a la actividad: ${esc(t.title)}"><span class="tl-annex">${esc(t.annex)}</span><span class="tl-title-text">${esc(title)}</span></button>`;
-  const card=`<div class="tl-project-card ${status(t)==='Por empezar'?'tl-pending':status(t)==='Terminado'?'tl-finished':'tl-active'}" style="left:${pos(cardStart)}%;width:${width(span)}%" title="Proyectado: ${esc(t.start||'Sin fecha')} a ${esc(t.end||'Sin fecha')}"><div class="tl-card-title">${statusDot(t)}${label}</div>${compact?'':`<div class="tl-card-percent">Obra a: ${progress}%</div>`}<div class="tl-card-progress"><div style="width:${progress}%"></div></div></div>`;
+  const card=`<div class="tl-project-card ${status(t)==='Por empezar'?'tl-pending':status(t)==='Terminado'?'tl-finished':'tl-active'} ${tiny?'tl-brief':''}" style="left:${pos(cardStart)}%;width:${width(span)}%" title="Proyectado: ${esc(t.start||'Sin fecha')} a ${esc(t.end||'Sin fecha')} · Avance: ${progress}%"><div class="tl-card-top"><div class="tl-card-title">${statusDot(t)}${label}</div>${mobile?`<span class="tl-percent-inline">${progress}%</span>`:''}</div>${mobile||compact?'':`<div class="tl-card-percent">Obra a: ${progress}%</div>`}<div class="tl-card-progress"><div style="width:${progress}%"></div></div></div>`;
   const red=extended?`<div class="tl-delay" style="left:${pos(end+1)}%;width:${width(real-end)}%" title="Fin proyectado: ${t.end} · Fin real: ${t.completedDate}"><span>Finalizó en</span><span class="tl-delay-arrow">➜</span></div>`:'';
   const actual=real!==null?`<span class="tl-actual-marker" style="left:${pos(real+.5)}%" title="Fin real: ${t.completedDate}">◆</span>`:'';
-  const cells=Array.from({length:d.total},(_,i)=>`<div class="tl-background-cell ${i%7===0?'week-start':''} ${Math.floor(i/7)%2===0?'week-blue':'week-white'}"></div>`).join('');
+  const cells=Array.from({length:d.total},(_,i)=>`<div class="tl-background-cell ${i%7===0?'week-start':''} ${Math.floor(i/7)%2===0?'week-blue':'week-white'} ${mobile&&d.lo+i===todayDay?'is-today':''}"></div>`).join('');
   return `<div class="tl-row-ref"><div class="tl-row-cells">${cells}</div>${card}${red}${actual}</div>`;
  }).join('');
- return `<div class="tl-reference-grid ${compact?'tl-compact':''}" style="--day-count:${d.total}">${head}${rows}${todayVisible?`<span class="tl-today-continuous" style="left:${pos(todayDay+.5)}%"></span>`:''}</div>`;
+ return `<div class="tl-reference-grid ${compact?'tl-compact':''} ${mobile?'tl-mobile-view':''}" style="--day-count:${d.total}">${head}${rows}${todayVisible?`<span class="tl-today-continuous" style="left:${pos(todayDay+.5)}%"></span>`:''}</div>`;
 }
 
 document.addEventListener('click',e=>{const b=e.target.closest('[data-jump]');if(!b)return;$('search').value='';render();const target=$('activity-'+b.dataset.jump);if(target){collapsedActivities.delete(String(b.dataset.jump));persistCollapsed();target.classList.remove('is-collapsed');target.querySelector('.collapse-btn')?.setAttribute('aria-expanded','true');target.querySelector('.collapse-btn').textContent='−';target.scrollIntoView({behavior:'smooth',block:'center'});history.replaceState(null,'','#activity-'+b.dataset.jump)}});
@@ -283,8 +284,30 @@ catch(e){collapsedIds=tasks.map(t=>String(t.id))}
 const collapsedActivities=new Set(collapsedIds);
 // Guardar preferencias después de la primera carga compartida, no antes.
 function persistCollapsed(){storeSet(COLLAPSE_KEY,JSON.stringify([...collapsedActivities]))}
-let compactTimeline=false;document.addEventListener('click',e=>{if(e.target.id==='timeline-mode'){compactTimeline=!compactTimeline;e.target.textContent=compactTimeline?'Vista completa':'Vista compacta';$('timeline').innerHTML=timelineHTML(false,compactTimeline);}});
-function render(){const w=weekInfo();document.querySelector('header small').textContent=`CONTROL DE OBRA · SEMANA ${w.week} / ${w.year}`;document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;let q=$('search').value.toLowerCase();const counts={'Por empezar':0,'En proceso':0,'Terminado':0};tasks.forEach(t=>counts[status(t)]++);$('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];$('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];$('board').innerHTML=['Por empezar','En proceso','Terminado'].map(st=>{const list=tasks.filter(t=>status(t)===st&&(`${t.id} ${t.title}`).toLowerCase().includes(q));return `<section class="column"><h2>${st} (${counts[st]})</h2>${list.length?list.map(card).join(''):'<div class="empty">Sin actividades</div>'}</section>`}).join('');$('timeline').innerHTML=timelineHTML(false,compactTimeline);}
+
+let compactTimeline=isMobileTimeline();
+let timelineViewportMobile=isMobileTimeline();
+function setTimelineButtonLabel(){
+ const button=$('timeline-mode');
+ if(button)button.textContent=compactTimeline?'Vista completa':'Vista compacta';
+}
+document.addEventListener('click',e=>{
+ if(e.target.id!=='timeline-mode')return;
+ compactTimeline=!compactTimeline;
+ setTimelineButtonLabel();
+ const host=$('timeline');
+ if(host)host.innerHTML=timelineHTML(false,compactTimeline,isMobileTimeline());
+});
+window.addEventListener('resize',()=>{
+ const mobile=isMobileTimeline();
+ if(mobile===timelineViewportMobile)return;
+ timelineViewportMobile=mobile;
+ compactTimeline=mobile;
+ setTimelineButtonLabel();
+ const host=$('timeline');
+ if(host)host.innerHTML=timelineHTML(false,compactTimeline,mobile);
+});
+function render(){const w=weekInfo();document.querySelector('header small').textContent=`CONTROL DE OBRA · SEMANA ${w.week} / ${w.year}`;document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;let q=$('search').value.toLowerCase();const counts={'Por empezar':0,'En proceso':0,'Terminado':0};tasks.forEach(t=>counts[status(t)]++);$('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];$('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];$('board').innerHTML=['Por empezar','En proceso','Terminado'].map(st=>{const list=tasks.filter(t=>status(t)===st&&(`${t.id} ${t.title}`).toLowerCase().includes(q));return `<section class="column"><h2>${st} (${counts[st]})</h2>${list.length?list.map(card).join(''):'<div class="empty">Sin actividades</div>'}</section>`}).join('');setTimelineButtonLabel();$('timeline').innerHTML=timelineHTML(false,compactTimeline,isMobileTimeline());}
 function card(t){if(!isAdmin())return viewerCard(t);const steps=names.map((n,i)=>{let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before">${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after">${selectOptions(t.id,t.after)}</select></div></div>`;
 if(i===1)detail=`<div class="detail">Revisores: ${esc(t.reviewers||'Pendiente')}\nAnexo de diagramas/especificaciones/materiales: ${esc(t.reviewAnnex||'Sin código')}</div>`;
 if(i===2)detail=`<div class="detail">Autorizó: ${esc(t.authorizer||'Pendiente')}</div>`;
