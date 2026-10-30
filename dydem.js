@@ -486,7 +486,9 @@ async function previewAttachment(t,meta){
  }catch(err){if(request!==attachmentPreviewSequence)return;showFailure();note.textContent='No se puede abrir la vista previa: '+messageError(err)}
 }
 function viewerAttachmentLinks(t){
- return t.attachments.length?t.attachments.map(a=>attachmentActions(t,a)).join(' '):'<span class="muted">Sin anexos adjuntos</span>';
+ const saved=t.attachments.map(a=>attachmentActions(t,a)).join(' ');
+ const pending=pendingForActivity(t.id).map(a=>`<span class="pending-attachment-label" title="Se verificará automáticamente al recuperar la conexión">⏳ ${esc(a.file_name)} (pendiente)</span>`).join(' ');
+ return (saved+' '+pending).trim()||'<span class="muted">Sin anexos adjuntos</span>';
 }
 function viewerCard(t){
  const state=status(t),stateClass=state==='Por empezar'?'status-pending':state==='Terminado'?'status-finished':'status-active';
