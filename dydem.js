@@ -38,6 +38,25 @@ function showLoginForm(message=''){
 }
 const isAdmin=()=>!!currentAccount&&currentAccount.role==='admin'&&currentAccount.active;
 const isSignedIn=()=>!!currentAccount&&currentAccount.active;
+const isCustom=()=>isSignedIn()&&currentAccount.role==='custom';
+function emptyPermissions(){return {steps:[false,false,false,false,false,false,false],add:false,delete:false}}
+function accountPermissions(){const p=currentAccount?.permissions;return p&&Array.isArray(p.steps)&&p.steps.length===7?p:emptyPermissions()}
+function canEditStep(i){return isAdmin()||(isCustom()&&accountPermissions().steps[Number(i)]===true)}
+function canEditAnyStep(){return names.some((_,i)=>canEditStep(i))}
+function canAddActivity(){return isAdmin()||(isCustom()&&accountPermissions().add===true)}
+function canDeleteActivity(){return isAdmin()||(isCustom()&&accountPermissions().delete===true)}
+function stageForField(f){return (['title','start','end','before','after'].includes(f))?0:f==='reviewers'||f==='reviewAnnex'?1:f==='authorizer'?2:f==='progress'?3:f==='verification'?4:f==='attachments'?5:f==='completedDate'?6:-1}
+function permissionChooser(prefix,p){
+ const perms=p&&Array.isArray(p.steps)?p:emptyPermissions();
+ return '<div class="permission-choices">'+names.map((name,i)=>
+  `<label class="permission-item"><input type="checkbox" data-custom-step="${i}" ${perms.steps[i]?'checked':''}><span><b>${i+1}. ${esc(name)}</b>${i===0?'<small>Descripción, fechas y dependencias</small>':''}</span></label>`).join('')+
+ `<label class="permission-item"><input type="checkbox" data-custom-action="add" ${perms.add?'checked':''}><span><b>Agregar actividades</b></span></label>
+ <label class="permission-item"><input type="checkbox" data-custom-action="delete" ${perms.delete?'checked':''}><span><b>Eliminar actividades</b></span></label></div>`;
+}
+function readPermissions(root){return {steps:names.map((_,i)=>!!root.querySelector('[data-custom-step="'+i+'"]')?.checked),add:!!root.querySelector('[data-custom-action="add"]')?.checked,delete:!!root.querySelector('[data-custom-action="delete"]')?.checked}}
+function roleLabel(role){return role==='admin'?'Administrador':role==='custom'?'Personalizado':'Visualizador'}
+function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps.map((v,i)=>v?names[i]:null).filter(Boolean);if(p.add)a.push('Agregar');if(p.delete)a.push('Eliminar');return a.length?a.join(', '):'Solo lectura y comentarios'}
+
 function syncState(message,error=false,busy=false){const el=$('sync-state');if(!el)return;el.textContent=message;el.classList.toggle('is-error',error);el.classList.toggle('is-busy',busy)}
 function messageError(err){return (err&&err.message)||String(err||'Error desconocido')}
 async function edgeErrorMessage(err){
@@ -54,9 +73,9 @@ async function edgeErrorMessage(err){
 }
 function connectionConfig(){const cfg=window.DYDEM_CONFIG||{};if(!cfg.url||!/^https:\/\/[^/]+/.test(cfg.url)||!cfg.anonKey||cfg.anonKey.includes('REEMPLAZAR')||!window.supabase?.createClient)return null;return cfg}
 function showSetupError(){const el=$('access-error');$('access-help').textContent='La instalación todavía no está conectada a Supabase.';el.textContent='Configura site/config.js con la URL y la clave pública del proyecto. Después publica el sitio por HTTPS. Consulta INSTRUCCIONES.md.';$('access-submit').disabled=true}
-function enterAccount(profile){currentAccount={...profile,name:profile.display_name||profile.email||'Usuario'};document.body.classList.add('signed-in');document.body.classList.toggle('viewer-mode',!isAdmin());if(recoverMode)showRecoveryForm();else {$('access-gate').hidden=true;$('reset-container').hidden=true;}$('session-label').textContent=currentAccount.name+' · '+(isAdmin()?'Administrador':'Solo lectura');$('manage-users').hidden=!isAdmin();$('user-management').hidden=true;render();}
-async function loadAccount(){const {data:sessionData,error:sessionError}=await cloud.auth.getSession();if(sessionError)throw sessionError;const user=sessionData.session?.user;if(!user){await leaveAccount(false);return}const {data:profile,error}=await cloud.from('profiles').select('id,email,display_name,role,active').eq('id',user.id).single();if(error||!profile||!profile.active){await cloud.auth.signOut();throw Error('Esta cuenta no tiene acceso activo a DYDEM. Consulta a un administrador.')}enterAccount(profile);await reloadActivities(true);startRealtime();if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
-async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;tasks=[];commentsByActivity.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode');$('access-gate').hidden=false;$('user-management').hidden=true;$('access-pass').value='';render();syncState('Sin sesión')}
+function enterAccount(profile){currentAccount={...profile,name:profile.display_name||profile.email||'Usuario'};$('add').hidden=!canAddActivity();$('save').hidden=!canEditAnyStep();document.body.classList.add('signed-in');document.body.classList.toggle('viewer-mode',!isAdmin()&&!isCustom());document.body.classList.toggle('custom-mode',isCustom());if(recoverMode)showRecoveryForm();else {$('access-gate').hidden=true;$('reset-container').hidden=true;}$('session-label').textContent=currentAccount.name+' · '+roleLabel(currentAccount.role);$('manage-users').hidden=!isAdmin();$('user-management').hidden=true;render();}
+async function loadAccount(){const {data:sessionData,error:sessionError}=await cloud.auth.getSession();if(sessionError)throw sessionError;const user=sessionData.session?.user;if(!user){await leaveAccount(false);return}const {data:profile,error}=await cloud.from('profiles').select('id,email,display_name,role,permissions,active').eq('id',user.id).single();if(error||!profile||!profile.active){await cloud.auth.signOut();throw Error('Esta cuenta no tiene acceso activo a DYDEM. Consulta a un administrador.')}enterAccount(profile);await reloadActivities(true);startRealtime();if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
+async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;tasks=[];commentsByActivity.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');$('access-gate').hidden=false;$('user-management').hidden=true;$('access-pass').value='';render();syncState('Sin sesión')}
 function isDirty(){return tasks.some(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)))}
 async function reloadComments(){
  if(!isSignedIn())return;
@@ -75,9 +94,9 @@ async function reloadComments(){
 async function reloadActivities(force=false){if(!isSignedIn())return;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}syncState('Actualizando…',false,true);const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',PROJECT_ID).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}await reloadComments();tasks=(data||[]).map(r=>migrate({...r.data,id:Number(r.id)}));if(!collapsePreferencesInitialized){const saved=storeGet(COLLAPSE_KEY);if(saved===null){tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed()}collapsePreferencesInitialized=true}lastSynced=new Map(tasks.map(t=>[Number(t.id),JSON.stringify(t)]));revisions=new Map(data.map(r=>[Number(r.id),r.revision]));render();syncState('Actualizado');refreshQueued=false}
 function scheduleCloudRefresh(){if(refreshDelay)clearTimeout(refreshDelay);refreshDelay=setTimeout(()=>{refreshDelay=null;reloadActivities().catch(e=>syncState('No se pudo sincronizar',true))},450)}
 function startRealtime(){if(subscription){cloud.removeChannel(subscription);subscription=null}subscription=cloud.channel('dydem-obra-shared').on('postgres_changes',{event:'*',schema:'public',table:'activities',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'INSERT',schema:'public',table:'activity_comments',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'DELETE',schema:'public',table:'activity_comments'},()=>scheduleCloudRefresh()).subscribe();if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(isSignedIn())reloadActivities().catch(()=>syncState('Error de actualización',true))},15000)}
-async function save(){if(!isAdmin())return;savePending=true;if(saveBusy)return;saveBusy=true;syncState('Guardando…',false,true);
+async function save(){if(!canEditAnyStep())return;savePending=true;if(saveBusy)return;saveBusy=true;syncState('Guardando…',false,true);
  try{while(savePending){savePending=false;const changed=tasks.filter(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)));
-  for(const t of changed){const id=Number(t.id),expected=revisions.get(id);if(expected===undefined)throw Error('Actividad sin versión de servidor: '+id);const sent=JSON.stringify(t);const {data,error}=await cloud.rpc('update_activity',{p_id:id,p_expected_revision:expected,p_data:JSON.parse(sent)});if(error)throw error;revisions.set(id,data.revision);lastSynced.set(id,JSON.stringify(migrate(data.data)));}
+  for(const t of changed){const id=Number(t.id),expected=revisions.get(id);if(expected===undefined)throw Error('Actividad sin versión de servidor: '+id);const sent=JSON.stringify(t);const {data,error}=await cloud.rpc(isAdmin()?'update_activity':'update_activity_custom',{p_id:id,p_expected_revision:expected,p_data:JSON.parse(sent)});if(error)throw error;revisions.set(id,data.revision);lastSynced.set(id,JSON.stringify(migrate(data.data)));}
  }}catch(e){savePending=false;const msg=messageError(e);syncState('Cambios pendientes: error',true);alert('No se pudo confirmar el guardado en el servidor. Los cambios siguen visibles en esta pestaña y puedes reintentar con «Guardar cambios». No cierres la página sin guardarlos. Detalle: '+msg);return}finally{saveBusy=false}
  syncState('Guardado');if(refreshQueued)reloadActivities().catch(()=>syncState('Sincronización pendiente',true));
 }
@@ -134,19 +153,37 @@ $('change-password').onclick=()=>{
  showRecoveryForm();$('access-help').textContent='Sesión activa: introduce una nueva contraseña de al menos diez caracteres.';$('access-error').textContent='';
 };
 $('cancel-password').onclick=()=>{storeSet(RECOVERY_PENDING_KEY,'0');showLoginForm();};
-async function showUsers(){if(!isAdmin())return;const {data,error}=await cloud.from('profiles').select('id,email,display_name,role,active').order('created_at',{ascending:true});if(error){$('user-error').textContent=messageError(error);return}$('user-list').innerHTML=(data||[]).map(a=>`<div class="user-entry"><span><b>${esc(a.display_name||a.email)}</b> · ${esc(a.email)} · ${a.role==='admin'?'Administrador':'Visualizador'} · ${a.active?'Activo':'Desactivado'}</span>${a.id===currentAccount.id?'(sesión actual)':`<button class="btn secondary" type="button" data-toggle-user="${esc(a.id)}" data-active="${a.active?'true':'false'}">${a.active?'Desactivar':'Reactivar'}</button>`}</div>`).join('')}
+async function showUsers(){
+ if(!isAdmin())return;
+ const {data,error}=await cloud.from('profiles').select('id,email,display_name,role,permissions,active').order('created_at',{ascending:true});
+ if(error){$('user-error').textContent=messageError(error);return}
+ $('user-list').innerHTML=(data||[]).map(a=>{
+  const self=a.id===currentAccount.id, p=a.permissions||emptyPermissions();
+  const opts=['viewer','custom','admin'].map(r=>`<option value="${r}" ${r===a.role?'selected':''}>${roleLabel(r)}</option>`).join('');
+  return `<div class="user-entry">
+   <div class="user-summary"><b>${esc(a.display_name||a.email)}</b><span>${esc(a.email)} · ${roleLabel(a.role)} · ${a.active?'Activo':'Desactivado'}</span>${a.role==='custom'?`<small>${esc(permissionSummary(p))}</small>`:''}</div>
+   <div class="user-actions">${self?'<span class="muted">(sesión actual)</span>':`<button class="btn secondary" type="button" data-toggle-user="${esc(a.id)}" data-active="${a.active?'true':'false'}">${a.active?'Desactivar':'Reactivar'}</button><button class="btn secondary" type="button" data-configure-user="${esc(a.id)}">Configurar permisos</button>`}</div>
+   ${self?'':`<div class="user-permissions-editor" data-editor-user="${esc(a.id)}" hidden>
+    <label>Tipo de permiso<select data-edit-role>${opts}</select></label>
+    <fieldset class="permission-panel" data-edit-custom ${a.role==='custom'?'':'hidden'}><legend>Permitir modificar estas etapas</legend>${permissionChooser(a.id,p)}</fieldset>
+    <div class="user-actions"><button class="btn" type="button" data-save-user-permissions="${esc(a.id)}">Guardar permisos</button><button class="btn secondary" type="button" data-cancel-user-permissions="${esc(a.id)}">Cancelar</button></div>
+   </div>`}
+  </div>`;
+ }).join('');
+}
 $('manage-users').onclick=()=>{if(!isAdmin())return;$('user-management').hidden=!$('user-management').hidden;if(!$('user-management').hidden)showUsers()};
 $('user-create').onsubmit=async e=>{
  e.preventDefault();if(!isAdmin())return;
  const btn=e.submitter||$('user-create').querySelector('button[type="submit"]');
  const temporary=$('new-method').value==='temporary';
+ const role=$('new-role').value;const permissions=role==='custom'?readPermissions($('new-custom-permissions')):emptyPermissions();
  btn.disabled=true;
  $('temporary-access').hidden=true;
  $('temporary-password').value='';
  $('user-error').textContent=temporary?'Creando cuenta…':'Enviando invitación…';
  try{
   const {data,error}=await cloud.functions.invoke('manage-users',{
-   body:{action:temporary?'create-password-user':'invite',email:$('new-user').value.trim(),name:$('new-name').value.trim(),role:$('new-role').value}
+   body:{action:temporary?'create-password-user':'invite',email:$('new-user').value.trim(),name:$('new-name').value.trim(),role,permissions}
   });
   if(error)throw Error(await edgeErrorMessage(error));
   if(data?.error)throw Error(data.error);
@@ -158,7 +195,7 @@ $('user-create').onsubmit=async e=>{
   }else{
    $('user-error').textContent='Invitación enviada. La persona deberá aceptar el correo y establecer su contraseña.';
   }
-  $('user-create').reset();
+  $('user-create').reset();$('new-custom-permissions').hidden=true;
   await showUsers();
  }catch(err){
   $('user-error').textContent='No se pudo '+(temporary?'crear el acceso':'enviar la invitación')+': '+messageError(err);
@@ -174,7 +211,50 @@ $('copy-temporary-password').onclick=async()=>{
   $('user-error').textContent='Selecciona la contraseña temporal y cópiala con Ctrl+C.';
  }
 };
-$('user-list').onclick=async e=>{const b=e.target.closest('[data-toggle-user]');if(!b||!isAdmin())return;const activate=b.dataset.active!=='true';if(!confirm((activate?'¿Reactivar':'¿Desactivar')+' el acceso de este usuario?'))return;b.disabled=true;try{const {data,error}=await cloud.functions.invoke('manage-users',{body:{action:'set-active',user_id:b.dataset.toggleUser,active:activate}});if(error)throw error;if(data?.error)throw Error(data.error);await showUsers()}catch(err){$('user-error').textContent=messageError(err)}finally{b.disabled=false}};
+$('new-custom-permissions').innerHTML=permissionChooser('new',emptyPermissions());
+$('new-role').onchange=()=>{$('new-custom-permissions').hidden=$('new-role').value!=='custom'};
+$('user-list').addEventListener('change',e=>{
+ const sel=e.target.closest('select[data-edit-role]');
+ if(sel){const edit=sel.closest('[data-editor-user]');edit.querySelector('[data-edit-custom]').hidden=sel.value!=='custom'}
+});
+$('user-list').onclick=async e=>{
+ const toggle=e.target.closest('[data-toggle-user]');
+ const config=e.target.closest('[data-configure-user]');
+ const cancel=e.target.closest('[data-cancel-user-permissions]');
+ const submit=e.target.closest('[data-save-user-permissions]');
+ if(!isAdmin())return;
+ if(config){const box=$('user-list').querySelector('[data-editor-user="'+config.dataset.configureUser+'"]');if(box)box.hidden=!box.hidden;return}
+ if(cancel){const box=$('user-list').querySelector('[data-editor-user="'+cancel.dataset.cancelUserPermissions+'"]');if(box)box.hidden=true;return}
+ if(submit){
+  const id=submit.dataset.saveUserPermissions,box=$('user-list').querySelector('[data-editor-user="'+id+'"]');
+  if(!box)return;
+  const role=box.querySelector('[data-edit-role]').value;
+  const permissions=role==='custom'?readPermissions(box.querySelector('[data-edit-custom]')):emptyPermissions();
+  if(!confirm('¿Guardar los permisos de este usuario? Los cambios se aplicarán al actualizar su sesión.'))return;
+  submit.disabled=true;$('user-error').textContent='Guardando permisos…';
+  try{
+   const {data,error}=await cloud.functions.invoke('manage-users',{body:{action:'set-permissions',user_id:id,role,permissions}});
+   if(error)throw Error(await edgeErrorMessage(error));
+   if(data?.error)throw Error(data.error);
+   $('user-error').textContent='Permisos actualizados correctamente.';
+   await showUsers();
+  }catch(err){$('user-error').textContent='No se pudieron guardar los permisos: '+messageError(err)}
+  finally{submit.disabled=false}
+  return;
+ }
+ if(toggle){
+  const activate=toggle.dataset.active!=='true';
+  if(!confirm((activate?'¿Reactivar':'¿Desactivar')+' el acceso de este usuario?'))return;
+  toggle.disabled=true;
+  try{
+   const {data,error}=await cloud.functions.invoke('manage-users',{body:{action:'set-active',user_id:toggle.dataset.toggleUser,active:activate}});
+   if(error)throw Error(await edgeErrorMessage(error));
+   if(data?.error)throw Error(data.error);
+   await showUsers()
+  }catch(err){$('user-error').textContent=messageError(err)}
+  finally{toggle.disabled=false}
+ }
+};
 async function initializeOnline(){
  const cfg=connectionConfig();if(!cfg){showSetupError();return}
  cloud=window.supabase.createClient(cfg.url,cfg.anonKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
@@ -308,31 +388,38 @@ window.addEventListener('resize',()=>{
  if(host)host.innerHTML=timelineHTML(false,compactTimeline,mobile);
 });
 function render(){const w=weekInfo();document.querySelector('header small').textContent=`CONTROL DE OBRA · SEMANA ${w.week} / ${w.year}`;document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;let q=$('search').value.toLowerCase();const counts={'Por empezar':0,'En proceso':0,'Terminado':0};tasks.forEach(t=>counts[status(t)]++);$('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];$('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];$('board').innerHTML=['Por empezar','En proceso','Terminado'].map(st=>{const list=tasks.filter(t=>status(t)===st&&(`${t.id} ${t.title}`).toLowerCase().includes(q));return `<section class="column"><h2>${st} (${counts[st]})</h2>${list.length?list.map(card).join(''):'<div class="empty">Sin actividades</div>'}</section>`}).join('');setTimelineButtonLabel();$('timeline').innerHTML=timelineHTML(false,compactTimeline,isMobileTimeline());}
-function card(t){if(!isAdmin())return viewerCard(t);const steps=names.map((n,i)=>{let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before">${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after">${selectOptions(t.id,t.after)}</select></div></div>`;
+function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
 if(i===1)detail=`<div class="detail">Revisores: ${esc(t.reviewers||'Pendiente')}\nAnexo de diagramas/especificaciones/materiales: ${esc(t.reviewAnnex||'Sin código')}</div>`;
 if(i===2)detail=`<div class="detail">Autorizó: ${esc(t.authorizer||'Pendiente')}</div>`;
-if(i===3||i===4){let v=i===3?t.progress:t.verification;detail=`<div class="row" style="margin-top:6px"><span class="muted">${i===3?'Avance de obra':'Verificación'}</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="${i===3?'progress':'verification'}" value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
+if(i===3||i===4){let v=i===3?t.progress:t.verification;detail=`<div class="row" style="margin-top:6px"><span class="muted">${i===3?'Avance de obra':'Verificación'}</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="${i===3?'progress':'verification'}" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
 if(i===5)detail=`<div class="detail">${t.attachments.length?t.attachments.map(a=>`<a class="inline-download" href="#" data-download="${esc(a.id)}" data-id="${t.id}">${esc(a.name)}</a>`).join(''):'Sin anexos'}</div>`;
-if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" value="${esc(t.completedDate)}"></div></div>`;
-return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${t.steps[i]?'checked':''}>${i+1}. ${n}${i===5?' (opcional)':''}</label><details><summary>Ver / editar datos</summary>${detail}${[1,2,5].includes(i)?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">${i===5?'Gestionar anexos':'Editar datos'}</button>`:''}</details></div>`}).join('');return `<article class="task ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div><div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div><button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button> <button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>${commentsSection(t)}</div></article>`}
-let active=null;function modal(title,help,fields,action){if(!isAdmin())return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';$('modal').hidden=false;}
+if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
+return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${canEdit?'':'disabled'} ${t.steps[i]?'checked':''}>${i+1}. ${n}${i===5?' (opcional)':''}</label><details><summary>Ver / editar datos</summary>${detail}${[1,2,5].includes(i)&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">${i===5?'Gestionar anexos':'Editar datos'}</button>`:''}</details></div>`}).join('');return `<article class="task ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div><div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}</div></article>`}
+let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='edit'&&canEditStep(action.step))&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';$('modal').hidden=false;}
 function close(){active=null;$('modal').hidden=true;render()}
 $('modal-cancel').onclick=close;
 function requiredDates(t){return !!t.start&&!!t.end&&t.end>=t.start}
 function missing(){return tasks.filter(t=>!requiredDates(t)||t.steps[1]&&!t.reviewers.trim()||t.steps[2]&&!t.authorizer.trim()||t.steps[6]&&!t.completedDate)}
 function startup(){const incomplete=missing();if(!incomplete.length)return;const fields=incomplete.map(t=>`<fieldset style="border:1px solid #dce3ed;border-radius:8px"><legend>#${t.id} — ${esc(t.title.slice(0,75))}</legend><div class="row">${!requiredDates(t)?`<div class="field"><label>Inicio tentativo *</label><input type="date" name="start-${t.id}" value="${esc(t.start)}" required></div><div class="field"><label>Final tentativo *</label><input type="date" name="end-${t.id}" value="${esc(t.end)}" required></div>`:''}${t.steps[1]&&!t.reviewers.trim()?`<div class="field"><label>Personas que revisaron *</label><input name="reviewers-${t.id}" required></div>`:''}${t.steps[2]&&!t.authorizer.trim()?`<div class="field"><label>Persona que autorizó *</label><input name="authorizer-${t.id}" required></div>`:''}${t.steps[6]&&!t.completedDate?`<div class="field"><label>Fecha de compleción *</label><input type="date" name="completedDate-${t.id}" required></div>`:''}</div></fieldset>`).join('');modal('Completar datos obligatorios',`Hay ${incomplete.length} actividad(es) con datos obligatorios pendientes. Puedes cerrar y completarlos después; no se marcarán las etapas correspondientes hasta cumplir sus requisitos.`,fields,{type:'startup',ids:incomplete.map(t=>t.id)})}
-function editStep(t,i){if(i===1)modal(`Revisión · Actividad ${t.id}`,'Indica las personas que realizaron la revisión. El código de anexo es opcional.',`<div class="field"><label>Nombre(s) de revisores *</label><textarea name="reviewers" required>${esc(t.reviewers)}</textarea></div><div class="field"><label>Código de anexo (opcional)</label><input name="reviewAnnex" value="${esc(t.reviewAnnex)}"></div>`,{type:'edit',id:t.id,step:i});if(i===2)modal(`Autorización · Actividad ${t.id}`,'Indica quién autorizó la actividad.',`<div class="field"><label>Nombre de quien autorizó *</label><input name="authorizer" value="${esc(t.authorizer)}" required></div>`,{type:'edit',id:t.id,step:i});if(i===5)modal(`Documentación · Actividad ${t.id}`,'Agrega imágenes, videos, documentos y otros anexos. Se almacenan en la nube y se comparten con el equipo.',`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple></div><div id="attachment-list">${attachmentList(t)}</div>`,{type:'files',id:t.id,step:i})}
+function editStep(t,i){if(!canEditStep(i))return;if(i===1)modal(`Revisión · Actividad ${t.id}`,'Indica las personas que realizaron la revisión. El código de anexo es opcional.',`<div class="field"><label>Nombre(s) de revisores *</label><textarea name="reviewers" required>${esc(t.reviewers)}</textarea></div><div class="field"><label>Código de anexo (opcional)</label><input name="reviewAnnex" value="${esc(t.reviewAnnex)}"></div>`,{type:'edit',id:t.id,step:i});if(i===2)modal(`Autorización · Actividad ${t.id}`,'Indica quién autorizó la actividad.',`<div class="field"><label>Nombre de quien autorizó *</label><input name="authorizer" value="${esc(t.authorizer)}" required></div>`,{type:'edit',id:t.id,step:i});if(i===5)modal(`Documentación · Actividad ${t.id}`,'Agrega imágenes, videos, documentos y otros anexos. Se almacenan en la nube y se comparten con el equipo.',`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple></div><div id="attachment-list">${attachmentList(t)}</div>`,{type:'files',id:t.id,step:i})}
 function attachmentList(t){return t.attachments.map(a=>`<div class="attachment"><a href="#" data-download="${esc(a.id)}" data-id="${t.id}">${esc(a.name)}</a><button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button></div>`).join('')||'<span class="muted">No hay archivos adjuntos.</span>'}
 function canCheck(t,i){if(i>0&&!t.steps[i-1]&&!(i===6&&t.steps[4]))return 'Completa primero la etapa anterior.';if(i===0&&!requiredDates(t))return 'Completa las fechas tentativas de inicio y final.';if(i===1&&!t.reviewers.trim())return 'Introduce al menos un nombre de revisor.';if(i===2&&!t.authorizer.trim())return 'Introduce el nombre de quien autorizó.';if(i===3&&t.progress!==100)return 'El avance de obra debe llegar al 100 %.';if(i===4&&t.verification!==100)return 'La verificación debe llegar al 100 %.';if(i===6&&!t.completedDate)return 'Indica la fecha de compleción.';if(i===6&&t.before&&task(t.before)&&!task(t.before).steps[6])return 'La actividad anterior enlazada debe estar completada.';return ''}
 function autoCheck(t,i){if(!canCheck(t,i))t.steps[i]=true}
-function uncheck(t,i){if(i===5){t.steps[5]=false;return}for(let j=i;j<7;j++)t.steps[j]=false}
+function uncheck(t,i){if(isCustom()){t.steps[i]=false;return}if(i===5){t.steps[5]=false;return}for(let j=i;j<7;j++)t.steps[j]=false}
 function linkError(t,field,value){if(!value)return '';if(String(value)===String(t.id))return 'No se puede enlazar una actividad consigo misma.';if(field==='before'&&String(t.after)===String(value)||field==='after'&&String(t.before)===String(value))return 'Las dos dependencias no pueden apuntar a la misma actividad.';let next=task(value),seen=new Set([t.id]);while(next){if(seen.has(next.id))return 'Esta relación crearía un ciclo de dependencias.';seen.add(next.id);next=task(field==='before'?next.before:next.after)}return ''}
 // Storage privado de Supabase. metadata.path pertenece al bucket; nunca al navegador.
-async function putFile(t,file){if(!isAdmin())throw Error('Sin permisos');const id=crypto.randomUUID();const name=file.name.replace(/[^a-zA-Z0-9._-]+/g,'_').slice(-100)||'anexo';const path=`${PROJECT_ID}/${t.id}/${id}/${name}`;const {error}=await cloud.storage.from('activity-attachments').upload(path,file,{upsert:false,contentType:file.type||'application/octet-stream'});if(error)throw error;return {id,name:file.name,size:file.size,type:file.type,path}}
+async function putFile(t,file){if(!canEditStep(5))throw Error('Sin permisos');const id=crypto.randomUUID();const name=file.name.replace(/[^a-zA-Z0-9._-]+/g,'_').slice(-100)||'anexo';const path=`${PROJECT_ID}/${t.id}/${id}/${name}`;const {error}=await cloud.storage.from('activity-attachments').upload(path,file,{upsert:false,contentType:file.type||'application/octet-stream'});if(error)throw error;return {id,name:file.name,size:file.size,type:file.type,path}}
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
-async function deleteFile(meta){if(!isAdmin())throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
-$('board').addEventListener('click',async e=>{let b=e.target.closest('button');if(!b)return;let t=task(b.dataset.id||b.dataset.delete||b.dataset.rename||b.dataset.collapse);if(!t)return;if(b.dataset.collapse){const id=String(t.id);if(collapsedActivities.has(id))collapsedActivities.delete(id);else collapsedActivities.add(id);persistCollapsed();render();return}if(!isAdmin())return;if(b.dataset.delete){if(confirm(`¿Eliminar actividad ${t.id}?`)){syncState('Eliminando…',false,true);const {error}=await cloud.rpc('delete_activity',{p_id:t.id,p_expected_revision:revisions.get(Number(t.id))});if(error){alert('No se pudo eliminar: '+messageError(error));await reloadActivities(true);return}collapsedActivities.delete(String(t.id));persistCollapsed();await reloadActivities(true)}}else if(b.dataset.rename){let title=prompt('Descripción de la actividad:',t.title);if(title?.trim()){t.title=title.trim();save();render()}}else if(b.dataset.edit!==undefined)editStep(t,Number(b.dataset.edit))});
-
+async function deleteFile(meta){if(!canEditStep(5))throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
+$('board').addEventListener('click',async e=>{
+ const b=e.target.closest('button');if(!b)return;
+ const t=task(b.dataset.id||b.dataset.delete||b.dataset.rename||b.dataset.collapse);
+ if(!t)return;
+ if(b.dataset.collapse){const id=String(t.id);if(collapsedActivities.has(id))collapsedActivities.delete(id);else collapsedActivities.add(id);persistCollapsed();render();return}
+ if(b.dataset.delete){if(!canDeleteActivity())return;if(!confirm(`¿Eliminar actividad ${t.id}?`))return;syncState('Eliminando…',false,true);const {error}=await cloud.rpc('delete_activity',{p_id:t.id,p_expected_revision:revisions.get(Number(t.id))});if(error){alert('No se pudo eliminar: '+messageError(error));await reloadActivities(true);return}collapsedActivities.delete(String(t.id));persistCollapsed();await reloadActivities(true);return}
+ if(b.dataset.rename){if(!canEditStep(0))return;let title=prompt('Descripción de la actividad:',t.title);if(title?.trim()){t.title=title.trim();save();render()}return}
+ if(b.dataset.edit!==undefined){const i=Number(b.dataset.edit);if(canEditStep(i))editStep(t,i)}
+});
 document.addEventListener('toggle',event=>{
  const d=event.target;
  if(!(d instanceof HTMLDetailsElement)||!d.matches('[data-activity-section]')||!d.isConnected)return;
@@ -400,13 +487,36 @@ $('board').addEventListener('submit',async event=>{
  }catch(error){feedback.textContent='No se pudo publicar: '+messageError(error)}
  finally{button.disabled=false}
 });
-$('board').addEventListener('change',e=>{const el=e.target,t=task(el.dataset.id);if(!isAdmin()||!t)return;if(el.dataset.step!==undefined){let i=Number(el.dataset.step);if(!el.checked){uncheck(t,i)}else{let error=canCheck(t,i);if(error){alert(error);if([1,2,5].includes(i))editStep(t,i);else if(i===0)startup()}else t.steps[i]=true}}else if(el.dataset.field){let f=el.dataset.field,v=el.value;if(f==='progress'||f==='verification'){v=Math.max(0,Math.min(100,Number(v)||0));t[f]=v;if(v<100)uncheck(t,f==='progress'?3:4);else autoCheck(t,f==='progress'?3:4)}else if(f==='before'||f==='after'){let error=linkError(t,f,v);if(error){alert(error);render();return}t[f]=v}else{t[f]=v;if(f==='start'||f==='end'){if(!requiredDates(t))uncheck(t,0);else autoCheck(t,0)}if(f==='completedDate'){if(!v)uncheck(t,6);else autoCheck(t,6)}}}save();render()});
-$('modal-form').onsubmit=async e=>{e.preventDefault();if(!isAdmin()||!active)return;let form=new FormData(e.target);let err='';try{if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','reviewers','authorizer','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(active.type==='edit'){let t=task(active.id);if(active.step===1){t.reviewers=String(form.get('reviewers')||'').trim();t.reviewAnnex=String(form.get('reviewAnnex')||'').trim();if(t.reviewers)autoCheck(t,1);if(!t.reviewers)err='Se requiere al menos un nombre de revisor.'}if(active.step===2){t.authorizer=String(form.get('authorizer')||'').trim();if(t.authorizer)autoCheck(t,2);if(!t.authorizer)err='El nombre de quien autorizó es obligatorio.'}}else if(active.type==='files'){let t=task(active.id);let files=$('attachments-input').files;for(let file of files){const uploaded=await putFile(t,file);t.attachments.push(uploaded);autoCheck(t,5)}}if(err){$('modal-error').textContent=err;return}save();close()}catch(ex){$('modal-error').textContent='No se pudo guardar: '+ex.message}};
-$('modal-fields').addEventListener('click',async e=>{let b=e.target.closest('button[data-remove-file]');if(!b||!isAdmin())return;let t=task(b.dataset.id),id=b.dataset.removeFile;if(!confirm('¿Quitar este anexo?'))return;const meta=t.attachments.find(a=>a.id===id);t.attachments=t.attachments.filter(a=>a.id!==id);if(!t.attachments.length)uncheck(t,5);await save();if(isDirty()){alert('El servidor no confirmó el cambio. El archivo sigue guardado en la nube.');return}try{await deleteFile(meta)}catch(err){alert('Se quitó la referencia al archivo, pero no pudo eliminarse de Storage. Solicita a un administrador que revise los archivos huérfanos. '+messageError(err))}$('attachment-list').innerHTML=attachmentList(t)});
+$('board').addEventListener('change',e=>{
+ const el=e.target,t=task(el.dataset.id);
+ if(!t||!isSignedIn())return;
+ if(el.dataset.step!==undefined){
+  const i=Number(el.dataset.step);
+  if(!canEditStep(i))return;
+  if(!el.checked){uncheck(t,i)}
+  else{const error=canCheck(t,i);if(error){alert(error);if([1,2,5].includes(i))editStep(t,i);else if(i===0&&isAdmin())startup()}else t.steps[i]=true}
+ }else if(el.dataset.field){
+  const f=el.dataset.field,i=stageForField(f);if(!canEditStep(i))return;
+  let v=el.value;
+  if(f==='progress'||f==='verification'){
+   v=Math.max(0,Math.min(100,Number(v)||0));t[f]=v;
+   if(v<100)uncheck(t,i);else autoCheck(t,i);
+  }else if(f==='before'||f==='after'){
+   const error=linkError(t,f,v);if(error){alert(error);render();return}t[f]=v;
+  }else{
+   t[f]=v;
+   if(f==='start'||f==='end'){if(!requiredDates(t))uncheck(t,0);else autoCheck(t,0)}
+   if(f==='completedDate'){if(!v)uncheck(t,6);else autoCheck(t,6)}
+  }
+ }else return;
+ save();render();
+});
+$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||!(isAdmin()||active.type==='edit'&&canEditStep(active.step)||active.type==='files'&&canEditStep(5)))return;let form=new FormData(e.target);let err='';try{if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','reviewers','authorizer','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(active.type==='edit'){let t=task(active.id);if(active.step===1){t.reviewers=String(form.get('reviewers')||'').trim();t.reviewAnnex=String(form.get('reviewAnnex')||'').trim();if(t.reviewers)autoCheck(t,1);if(!t.reviewers)err='Se requiere al menos un nombre de revisor.'}if(active.step===2){t.authorizer=String(form.get('authorizer')||'').trim();if(t.authorizer)autoCheck(t,2);if(!t.authorizer)err='El nombre de quien autorizó es obligatorio.'}}else if(active.type==='files'){let t=task(active.id);let files=$('attachments-input').files;for(let file of files){const uploaded=await putFile(t,file);t.attachments.push(uploaded);autoCheck(t,5)}}if(err){$('modal-error').textContent=err;return}save();close()}catch(ex){$('modal-error').textContent='No se pudo guardar: '+ex.message}};
+$('modal-fields').addEventListener('click',async e=>{let b=e.target.closest('button[data-remove-file]');if(!b||!canEditStep(5))return;let t=task(b.dataset.id),id=b.dataset.removeFile;if(!confirm('¿Quitar este anexo?'))return;const meta=t.attachments.find(a=>a.id===id);t.attachments=t.attachments.filter(a=>a.id!==id);if(!t.attachments.length)uncheck(t,5);await save();if(isDirty()){alert('El servidor no confirmó el cambio. El archivo sigue guardado en la nube.');return}try{await deleteFile(meta)}catch(err){alert('Se quitó la referencia al archivo, pero no pudo eliminarse de Storage. Solicita a un administrador que revise los archivos huérfanos. '+messageError(err))}$('attachment-list').innerHTML=attachmentList(t)});
 document.addEventListener('click',async e=>{let a=e.target.closest('a[data-download]');if(!a)return;e.preventDefault();let t=task(a.dataset.id),meta=t?.attachments.find(x=>x.id===a.dataset.download);if(!meta)return;try{let blob=await getFile(meta);let url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=meta.name;link.click();setTimeout(()=>URL.revokeObjectURL(url),5000)}catch(err){alert('No se pudo descargar: '+messageError(err))}});
-$('add').onclick=async()=>{if(!isAdmin())return;let title=prompt('Descripción de la nueva actividad:');if(!title?.trim())return;syncState('Creando actividad…',false,true);const {data,error}=await cloud.rpc('create_activity',{p_title:title.trim()});if(error){syncState('Error al crear',true);alert(messageError(error));return}const id=Number(data.id);collapsedActivities.add(String(id));persistCollapsed();await reloadActivities(true);startup()};
+$('add').onclick=async()=>{if(!canAddActivity())return;let title=prompt('Descripción de la nueva actividad:');if(!title?.trim())return;syncState('Creando actividad…',false,true);const {data,error}=await cloud.rpc('create_activity',{p_title:title.trim()});if(error){syncState('Error al crear',true);alert(messageError(error));return}const id=Number(data.id);collapsedActivities.add(String(id));persistCollapsed();await reloadActivities(true);if(isAdmin())startup()};
 $('search').oninput=render;
-$('save').onclick=async()=>{if(!isAdmin())return;await save();if(!isDirty())alert('Información guardada en DYDEM en línea.')};
+$('save').onclick=async()=>{if(!canEditAnyStep())return;await save();if(!isDirty())alert('Información guardada en DYDEM en línea.')};
 $('backup').onclick=()=>{if(!isAdmin())return;let blob=new Blob([JSON.stringify({project:'DYDEM',version:3,exportedAt:new Date().toISOString(),tasks},null,2)],{type:'application/json'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='respaldo_dydem_'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)};
 $('import').onclick=()=>{if(isAdmin())$('importfile').click()};
 $('importfile').onchange=async e=>{if(!isAdmin())return;try{let data=JSON.parse(await e.target.files[0].text());if(!Array.isArray(data.tasks))throw Error('Archivo inválido');if(!confirm('La importación inicial solo se permite cuando la base de datos está vacía. Los archivos adjuntos no se transfieren en el JSON y deberán subirse de nuevo. ¿Continuar?'))return;syncState('Importando…',false,true);const {data:response,error}=await cloud.rpc('import_initial_activities',{p_activities:data.tasks.map(migrate)});if(error)throw error;collapsedActivities.clear();await reloadActivities(true);tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed();render();alert('Importadas '+response+' actividades. Recuerda volver a subir los anexos originales.')}catch(err){syncState('Error de importación',true);alert('Error al importar: '+messageError(err))}e.target.value=''};
