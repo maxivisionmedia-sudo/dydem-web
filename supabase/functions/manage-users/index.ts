@@ -7,12 +7,12 @@ const defaultSite = "https://maxivisionmedia-sudo.github.io/dydem-web/";
 const site = [defaultSite, ...(Deno.env.get("DYDEM_SITE_URL") || "").split(",").map(v=>v.trim()).filter(Boolean)];
 const origins = new Set(site.map(v=>{try{return new URL(v).origin}catch{return ""}}));
 const admin = createClient(url,secret,{auth:{persistSession:false,autoRefreshToken:false}});
-type PermissionSet={steps:boolean[],add:boolean,delete:boolean};
-const emptyPermissions=():PermissionSet=>({steps:[false,false,false,false,false,false,false],add:false,delete:false});
+type PermissionSet={steps:boolean[],add:boolean,delete:boolean,comment:boolean};
+const emptyPermissions=():PermissionSet=>({steps:[false,false,false,false,false,false,false],add:false,delete:false,comment:false});
 function validPermissions(v:unknown):v is PermissionSet{
  if(!v||typeof v!=="object")return false;
  const p=v as Record<string,unknown>;
- return Array.isArray(p.steps)&&p.steps.length===7&&p.steps.every(x=>typeof x==="boolean")&&typeof p.add==="boolean"&&typeof p.delete==="boolean";
+ return Array.isArray(p.steps)&&p.steps.length===7&&p.steps.every(x=>typeof x==="boolean")&&typeof p.add==="boolean"&&typeof p.delete==="boolean"&&typeof p.comment==="boolean";
 }
 function targetRole(value:unknown){return value==="admin"?"admin":value==="custom"?"custom":"viewer"}
 
