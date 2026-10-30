@@ -647,6 +647,23 @@ async function putFile(t,file){
  report('Archivo subido: '+file.name);
  return {id,name:file.name,size:file.size,type:file.type,path};
 }
+
+const pendingFileRegistrations=new Map();
+function pendingUploadKey(t,file){return [t.id,file.name,file.size,file.lastModified].join('::')}
+async function confirmUploadedAttachment(t,meta){
+ const id=Number(t.id);
+ const {data,error}=await cloud.rpc('attach_activity_file',{p_activity_id:id,p_file:meta});
+ if(error)throw error;
+ if(!data||!data.data||!Number.isInteger(Number(data.revision)))throw Error('El servidor no confirmó la referencia del archivo');
+ const next=migrate({...data.data,id});
+ Object.assign(t,next);
+ revisions.set(id,Number(data.revision));
+ lastSynced.set(id,JSON.stringify(next));
+ const list=$('attachment-list');
+ if(list)list.innerHTML=attachmentList(t);
+ syncState('Anexo guardado');
+ return next;
+}
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
 async function deleteFile(meta){if(!canEditStep(5))throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
 $('board').addEventListener('click',async e=>{
@@ -749,7 +766,36 @@ $('board').addEventListener('change',e=>{
  }else return;
  save();render();
 });
-$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='edit'&&canEditStep(active.step)||active.type==='files'&&canEditStep(5)))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=active.type==='files';let form=new FormData(e.target);let err='';try{if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','reviewers','authorizer','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(active.type==='edit'){let t=task(active.id);if(active.step===1){t.reviewers=String(form.get('reviewers')||'').trim();t.reviewAnnex=String(form.get('reviewAnnex')||'').trim();if(t.reviewers)autoCheck(t,1);if(!t.reviewers)err='Se requiere al menos un nombre de revisor.'}if(active.step===2){t.authorizer=String(form.get('authorizer')||'').trim();if(t.authorizer)autoCheck(t,2);if(!t.authorizer)err='El nombre de quien autorizó es obligatorio.'}}else if(active.type==='files'){let t=task(active.id);let files=$('attachments-input').files;for(let file of files){if(file.size>MAX_ATTACHMENT_BYTES)throw Error('No puedes subir archivos de más de 500 MB: '+file.name);if(file.size>CURRENT_STORAGE_LIMIT_BYTES)throw Error('El almacenamiento actual de Supabase admite como máximo 50 MB por archivo: '+file.name)}for(let file of files){const uploaded=await putFile(t,file);t.attachments.push(uploaded);autoCheck(t,5)}}if(err){$('modal-error').textContent=err;return}await save();if(isDirty()){$('modal-error').textContent='Hay cambios pendientes; pulsa Guardar para reintentar antes de cerrar.';return}attachmentUploadBusy=false;close()}catch(ex){$('modal-error').textContent='No se pudo guardar: '+ex.message}finally{attachmentUploadBusy=false;if(submitButton)submitButton.disabled=false}};
+$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='edit'&&canEditStep(active.step)||active.type==='files'&&canEditStep(5)))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=active.type==='files';let form=new FormData(e.target);let err='';try{if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','reviewers','authorizer','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(active.type==='edit'){let t=task(active.id);if(active.step===1){t.reviewers=String(form.get('reviewers')||'').trim();t.reviewAnnex=String(form.get('reviewAnnex')||'').trim();if(t.reviewers)autoCheck(t,1);if(!t.reviewers)err='Se requiere al menos un nombre de revisor.'}if(active.step===2){t.authorizer=String(form.get('authorizer')||'').trim();if(t.authorizer)autoCheck(t,2);if(!t.authorizer)err='El nombre de quien autorizó es obligatorio.'}}else if(active.type==='files'){
+ let t=task(active.id);
+ const files=Array.from($('attachments-input').files);
+ for(const file of files){
+  if(file.size>MAX_ATTACHMENT_BYTES)throw Error('No puedes subir archivos de más de 500 MB: '+file.name);
+  if(file.size>CURRENT_STORAGE_LIMIT_BYTES)throw Error('El almacenamiento actual de Supabase admite como máximo 50 MB por archivo: '+file.name);
+ }
+ // Registrar anexos por separado, sin sobrescribir otras ediciones simultáneas.
+ if(isDirty()){
+  await save();
+  if(isDirty())throw Error('Hay cambios de actividades pendientes. Guárdalos antes de cargar anexos.');
+ }
+ for(const file of files){
+  const key=pendingUploadKey(t,file);
+  let uploaded=pendingFileRegistrations.get(key);
+  if(!uploaded){
+   uploaded=await putFile(t,file);
+   pendingFileRegistrations.set(key,uploaded);
+  }
+  const state=$('attachment-upload-status');
+  if(state)state.textContent='Archivo subido; registrándolo en la actividad…';
+  try{
+   await confirmUploadedAttachment(t,uploaded);
+   pendingFileRegistrations.delete(key);
+  }catch(error){
+   throw Error('El archivo se subió, pero no pudo asociarse a la actividad. Conserva esta pestaña y pulsa Guardar de nuevo para reintentar sin volver a subirlo. Detalle: '+messageError(error));
+  }
+  if(state)state.textContent='Archivo registrado: '+file.name;
+ }
+}if(err){$('modal-error').textContent=err;return}await save();if(isDirty()){$('modal-error').textContent='Hay cambios pendientes; pulsa Guardar para reintentar antes de cerrar.';return}attachmentUploadBusy=false;close()}catch(ex){$('modal-error').textContent='No se pudo guardar: '+ex.message}finally{attachmentUploadBusy=false;if(submitButton)submitButton.disabled=false}};
 $('modal-fields').addEventListener('click',async e=>{let b=e.target.closest('button[data-remove-file]');if(!b||!canEditStep(5))return;let t=task(b.dataset.id),id=b.dataset.removeFile;if(!confirm('¿Quitar este anexo?'))return;const meta=t.attachments.find(a=>a.id===id);t.attachments=t.attachments.filter(a=>a.id!==id);if(!t.attachments.length)uncheck(t,5);await save();if(isDirty()){alert('El servidor no confirmó el cambio. El archivo sigue guardado en la nube.');return}try{await deleteFile(meta)}catch(err){alert('Se quitó la referencia al archivo, pero no pudo eliminarse de Storage. Solicita a un administrador que revise los archivos huérfanos. '+messageError(err))}$('attachment-list').innerHTML=attachmentList(t)});
 document.addEventListener('click',async e=>{
  const open=e.target.closest('[data-preview]');
