@@ -600,7 +600,7 @@ $('modal-cancel').onclick=close;
 function requiredDates(t){return !!t.start&&!!t.end&&t.end>=t.start}
 function missing(){return tasks.filter(t=>!requiredDates(t)||t.steps[1]&&!t.reviewers.trim()||t.steps[2]&&!t.authorizer.trim()||t.steps[6]&&!t.completedDate)}
 function startup(){const incomplete=missing();if(!incomplete.length)return;const fields=incomplete.map(t=>`<fieldset style="border:1px solid #dce3ed;border-radius:8px"><legend>#${t.id} — ${esc(t.title.slice(0,75))}</legend><div class="row">${!requiredDates(t)?`<div class="field"><label>Inicio tentativo *</label><input type="date" name="start-${t.id}" value="${esc(t.start)}" required></div><div class="field"><label>Final tentativo *</label><input type="date" name="end-${t.id}" value="${esc(t.end)}" required></div>`:''}${t.steps[1]&&!t.reviewers.trim()?`<div class="field"><label>Personas que revisaron *</label><input name="reviewers-${t.id}" required></div>`:''}${t.steps[2]&&!t.authorizer.trim()?`<div class="field"><label>Persona que autorizó *</label><input name="authorizer-${t.id}" required></div>`:''}${t.steps[6]&&!t.completedDate?`<div class="field"><label>Fecha de compleción *</label><input type="date" name="completedDate-${t.id}" required></div>`:''}</div></fieldset>`).join('');modal('Completar datos obligatorios',`Hay ${incomplete.length} actividad(es) con datos obligatorios pendientes. Puedes cerrar y completarlos después; no se marcarán las etapas correspondientes hasta cumplir sus requisitos.`,fields,{type:'startup',ids:incomplete.map(t=>t.id)})}
-function editStep(t,i){if(!canEditStep(i))return;if(i===1)modal(`Revisión · Actividad ${t.id}`,'Indica las personas que realizaron la revisión. El código de anexo es opcional.',`<div class="field"><label>Nombre(s) de revisores *</label><textarea name="reviewers" required>${esc(t.reviewers)}</textarea></div><div class="field"><label>Código de anexo (opcional)</label><input name="reviewAnnex" value="${esc(t.reviewAnnex)}"></div>`,{type:'edit',id:t.id,step:i});if(i===2)modal(`Autorización · Actividad ${t.id}`,'Indica quién autorizó la actividad.',`<div class="field"><label>Nombre de quien autorizó *</label><input name="authorizer" value="${esc(t.authorizer)}" required></div>`,{type:'edit',id:t.id,step:i});if(i===5)modal(`Documentación · Actividad ${t.id}`,'Agrega imágenes, videos, documentos y otros anexos. Se almacenan en la nube y se comparten con el equipo.',`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple><p class="attachment-upload-help">Máximo de DYDEM: 500 MB por archivo. El almacenamiento actual de Supabase admite hasta 50 MB por archivo. Las cargas mayores de 6 MB utilizan transferencia reanudable.</p><span id="attachment-upload-status" role="status"></span></div><div id="attachment-list">${attachmentList(t)}</div>`,{type:'files',id:t.id,step:i})}
+function editStep(t,i){if(!canEditStep(i))return;if(i===1)modal(`Revisión · Actividad ${t.id}`,'Indica las personas que realizaron la revisión. El código de anexo es opcional.',`<div class="field"><label>Nombre(s) de revisores *</label><textarea name="reviewers" required>${esc(t.reviewers)}</textarea></div><div class="field"><label>Código de anexo (opcional)</label><input name="reviewAnnex" value="${esc(t.reviewAnnex)}"></div>`,{type:'edit',id:t.id,step:i});if(i===2)modal(`Autorización · Actividad ${t.id}`,'Indica quién autorizó la actividad.',`<div class="field"><label>Nombre de quien autorizó *</label><input name="authorizer" value="${esc(t.authorizer)}" required></div>`,{type:'edit',id:t.id,step:i});if(i===5)modal(`Documentación · Actividad ${t.id}`,'Agrega imágenes, videos, documentos y otros anexos. Se almacenan en la nube y se comparten con el equipo.',`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple><p class="attachment-upload-help">Máximo de DYDEM: 500 MB por archivo. El almacenamiento actual de Supabase admite hasta 50 MB por archivo. DYDEM registra cada carga antes de enviarla y verifica su aparición en la actividad al finalizar. No cierres la ventana hasta recibir la confirmación.</p><span id="attachment-upload-status" role="status"></span></div><div id="attachment-list">${attachmentList(t)}</div>`,{type:'files',id:t.id,step:i})}
 function attachmentList(t){
  const files=t.attachments.map(a=>`<div class="attachment">${attachmentActions(t,a)}<button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button></div>`).join('');
  const pending=pendingForActivity(t.id).map(a=>`<div class="attachment pending-attachment"><span class="pending-attachment-info">⏳ <b>${esc(a.file_name)}</b><small> Pendiente: ${a.last_error?'No se pudo confirmar.':'Se recuperará automáticamente cuando esté completo.'} ${esc(a.last_error||'')}</small></span><button type="button" class="btn secondary" data-recover-upload="${esc(a.id)}" data-id="${t.id}">Comprobar</button></div>`).join('');
@@ -691,8 +691,8 @@ async function reconcileAttachmentIntents(){
    const id=Number(intent.activity_id),items=outstanding.get(id)||[];
    items.push(intent);outstanding.set(id,items);
   }
-  // Preserve newly-created intents while an upload started during a refresh.
-  for(const [id,items] of pendingAttachmentIntents){
+  // Preserve an intent created during a concurrent upload; discard outdated intents otherwise.
+  if(attachmentUploadBusy)for(const [id,items] of pendingAttachmentIntents){
    for(const item of items){
     if(repaired.includes(item.id))continue;
     if(!outstanding.has(id))outstanding.set(id,[]);
@@ -864,13 +864,12 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
   // 1. Create a durable intent BEFORE uploading any bytes.
   const intent=await prepareAttachmentUpload(current,file);
   if(state)state.textContent='Verificando carga anterior: '+file.name;
-  let complete=null;
-  try{
-   const result=await cloud.rpc('complete_activity_upload',{p_upload_id:intent.id});
-   if(result.error)throw result.error;
-   complete=result.data;
-  }catch(err){if(state)state.textContent='Se comprobará al terminar: '+messageError(err)}
-  if(complete?.status!=='linked'){
+  // A verification failure must NOT cause re-upload of an already-stored file.
+  const prior=await cloud.rpc('complete_activity_upload',{p_upload_id:intent.id});
+  if(prior.error)throw Error('No se pudo consultar la carga anterior. El archivo está registrado como pendiente: '+messageError(prior.error));
+  const complete=prior.data;
+  if(!complete||!['linked','pending'].includes(complete.status))throw Error('Estado de carga desconocido. No se enviará el archivo otra vez.');
+  if(complete.status!=='linked'){
    // 2. Upload once. The durable intent survives a refresh or connection failure.
    if(state)state.textContent='Cargando '+file.name+'…';
    await putFile(current,file,intent);
