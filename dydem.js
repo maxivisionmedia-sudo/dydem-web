@@ -323,11 +323,17 @@ const CURRENT_STORAGE_LIMIT_BYTES=50*1024*1024;
 const attachmentAssets=new Map();
 let attachmentPreviewSequence=0;
 let attachmentUploadBusy=false;
+const attachmentPreviewUrls=new Set();
+function revokeAttachmentPreviewUrls(){
+ for(const url of attachmentPreviewUrls)URL.revokeObjectURL(url);
+ attachmentPreviewUrls.clear();
+}
 function attachmentSize(n){return n>1024*1024?(n/(1024*1024)).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':(n||0)+' bytes'}
 function attachmentActions(t,a){
  const kind=attachmentFileKind(a);
  const types={
   image:{icon:'🖼️',label:'Imagen'},
+  heic:{icon:'📷',label:'Imagen HEIC o HEIF'},
   pdf:{icon:'📕',label:'Documento PDF'},
   video:{icon:'🎞️',label:'Video'},
   audio:{icon:'🎵',label:'Audio'},
@@ -339,6 +345,7 @@ function attachmentActions(t,a){
 }
 function attachmentFileKind(meta){
  const name=String(meta?.name||'').toLowerCase(),type=String(meta?.type||'').toLowerCase();
+ if(/\.hei[cf]$/.test(name)||/^image\/hei[cf](?:-sequence)?$/.test(type))return 'heic';
  if(type.startsWith('image/')||/\.(png|jpe?g|gif|webp|bmp|avif|svg)$/.test(name))return 'image';
  if(type==='application/pdf'||/\.pdf$/.test(name))return 'pdf';
  if(type.startsWith('video/')||/\.(mp4|mov|webm|m4v|ogg|ogv)$/.test(name))return 'video';
@@ -377,6 +384,7 @@ function closeAttachmentPreview(){
  if(!box)return;
  box.querySelectorAll('video,audio').forEach(el=>{try{el.pause();el.removeAttribute('src');el.load()}catch(_){}});
  $('attachment-preview-body').replaceChildren();
+ revokeAttachmentPreviewUrls();
  box.hidden=true;
 }
 async function previewAttachment(t,meta){
@@ -388,6 +396,7 @@ async function previewAttachment(t,meta){
  $('attachment-preview-download').dataset.download=meta.id;
  $('attachment-preview-download').dataset.id=String(t.id);
  body.replaceChildren();
+ revokeAttachmentPreviewUrls();
  note.textContent='Cargando vista previa…';
  const showFailure=()=>{if(request!==attachmentPreviewSequence)return;body.replaceChildren();const p=document.createElement('p');p.className='preview-unavailable';p.textContent='No se puede abrir una vista previa de este archivo. Puedes descargarlo.';body.appendChild(p);note.textContent='Vista previa no disponible.'};
  const kind=attachmentFileKind(meta);
@@ -399,6 +408,44 @@ async function previewAttachment(t,meta){
    const img=document.createElement('img');img.className='preview-image';img.alt='Vista previa de '+meta.name;
    img.onerror=showFailure;img.src=url;body.appendChild(img);
    note.textContent='Imagen original. Archivo disponible para descargar.';
+  }else if(kind==='heic'){
+   // Safari puede mostrar HEIC de manera nativa. Otros navegadores necesitan
+   // convertir una copia temporal a JPEG; la descarga conserva el HEIC original.
+   const img=document.createElement('img');img.className='preview-image';img.alt='Vista previa de '+meta.name;
+   let attemptedConversion=false;
+   img.onload=()=>{
+    if(request!==attachmentPreviewSequence)return;
+    note.textContent=attemptedConversion?
+     'Vista previa convertida a JPEG. Al descargar se conserva el HEIC/HEIF original.':
+     'Imagen HEIC/HEIF. Puedes descargar el archivo original.';
+   };
+   img.onerror=async()=>{
+    if(request!==attachmentPreviewSequence)return;
+    if(attemptedConversion){showFailure();return}
+    attemptedConversion=true;
+    note.textContent='Preparando vista previa HEIC/HEIF…';
+    try{
+     const converter=await loadAttachmentLibrary('heic2any','https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js');
+     if(request!==attachmentPreviewSequence)return;
+     const original=await getFile(meta);
+     if(request!==attachmentPreviewSequence)return;
+     const converted=await converter({blob:original,toType:'image/jpeg',quality:0.85});
+     if(request!==attachmentPreviewSequence)return;
+     const image=Array.isArray(converted)?converted[0]:converted;
+     if(!(image instanceof Blob))throw Error('No se pudo interpretar la imagen HEIC');
+     const convertedURL=URL.createObjectURL(image);
+     if(request!==attachmentPreviewSequence){URL.revokeObjectURL(convertedURL);return}
+     attachmentPreviewUrls.add(convertedURL);
+     img.src=convertedURL;
+    }catch(error){
+     if(request!==attachmentPreviewSequence)return;
+     showFailure();
+     note.textContent='No se puede abrir el HEIC/HEIF en este dispositivo: '+messageError(error)+'. Puedes descargar el original.';
+    }
+   };
+   body.appendChild(img);
+   img.src=url;
+   note.textContent='Abriendo imagen HEIC/HEIF…';
   }else if(kind==='pdf'){
    const lib=await loadAttachmentLibrary('pdfjsLib','https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js');
    if(request!==attachmentPreviewSequence)return;
