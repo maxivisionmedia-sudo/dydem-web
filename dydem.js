@@ -39,23 +39,25 @@ function showLoginForm(message=''){
 const isAdmin=()=>!!currentAccount&&currentAccount.role==='admin'&&currentAccount.active;
 const isSignedIn=()=>!!currentAccount&&currentAccount.active;
 const isCustom=()=>isSignedIn()&&currentAccount.role==='custom';
-function emptyPermissions(){return {steps:[false,false,false,false,false,false,false],add:false,delete:false}}
+function emptyPermissions(){return {steps:[false,false,false,false,false,false,false],add:false,delete:false,comment:false}}
 function accountPermissions(){const p=currentAccount?.permissions;return p&&Array.isArray(p.steps)&&p.steps.length===7?p:emptyPermissions()}
 function canEditStep(i){return isAdmin()||(isCustom()&&accountPermissions().steps[Number(i)]===true)}
 function canEditAnyStep(){return names.some((_,i)=>canEditStep(i))}
 function canAddActivity(){return isAdmin()||(isCustom()&&accountPermissions().add===true)}
 function canDeleteActivity(){return isAdmin()||(isCustom()&&accountPermissions().delete===true)}
+function canPostComment(){return isAdmin()||(isCustom()&&accountPermissions().comment===true)}
 function stageForField(f){return (['title','start','end','before','after'].includes(f))?0:f==='reviewers'||f==='reviewAnnex'?1:f==='authorizer'?2:f==='progress'?3:f==='verification'?4:f==='attachments'?5:f==='completedDate'?6:-1}
 function permissionChooser(prefix,p){
  const perms=p&&Array.isArray(p.steps)?p:emptyPermissions();
  return '<div class="permission-choices">'+names.map((name,i)=>
   `<label class="permission-item"><input type="checkbox" data-custom-step="${i}" ${perms.steps[i]?'checked':''}><span><b>${i+1}. ${esc(name)}</b>${i===0?'<small>Descripción, fechas y dependencias</small>':''}</span></label>`).join('')+
  `<label class="permission-item"><input type="checkbox" data-custom-action="add" ${perms.add?'checked':''}><span><b>Agregar actividades</b></span></label>
- <label class="permission-item"><input type="checkbox" data-custom-action="delete" ${perms.delete?'checked':''}><span><b>Eliminar actividades</b></span></label></div>`;
+ <label class="permission-item"><input type="checkbox" data-custom-action="delete" ${perms.delete?'checked':''}><span><b>Eliminar actividades</b></span></label>
+ <label class="permission-item"><input type="checkbox" data-custom-action="comment" ${perms.comment?'checked':''}><span><b>Publicar comentarios</b><small>Sin este permiso puede leer los comentarios existentes</small></span></label></div>`;
 }
-function readPermissions(root){return {steps:names.map((_,i)=>!!root.querySelector('[data-custom-step="'+i+'"]')?.checked),add:!!root.querySelector('[data-custom-action="add"]')?.checked,delete:!!root.querySelector('[data-custom-action="delete"]')?.checked}}
+function readPermissions(root){return {steps:names.map((_,i)=>!!root.querySelector('[data-custom-step="'+i+'"]')?.checked),add:!!root.querySelector('[data-custom-action="add"]')?.checked,delete:!!root.querySelector('[data-custom-action="delete"]')?.checked,comment:!!root.querySelector('[data-custom-action="comment"]')?.checked}}
 function roleLabel(role){return role==='admin'?'Administrador':role==='custom'?'Personalizado':'Visualizador'}
-function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps.map((v,i)=>v?names[i]:null).filter(Boolean);if(p.add)a.push('Agregar');if(p.delete)a.push('Eliminar');return a.length?a.join(', '):'Solo lectura y comentarios'}
+function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps.map((v,i)=>v?names[i]:null).filter(Boolean);if(p.add)a.push('Agregar');if(p.delete)a.push('Eliminar');if(p.comment)a.push('Publicar comentarios');return a.length?a.join(', '):'Solo lectura y ver comentarios'}
 
 function syncState(message,error=false,busy=false){const el=$('sync-state');if(!el)return;el.textContent=message;el.classList.toggle('is-error',error);el.classList.toggle('is-busy',busy)}
 function messageError(err){return (err&&err.message)||String(err||'Error desconocido')}
@@ -306,7 +308,8 @@ function commentListHTML(t){
 function sectionIsOpen(id,name){return sectionOpen.get(name+':'+id)!==false}
 function commentsSection(t){
  const open=sectionIsOpen(t.id,'comments')?' open':'';
- return `<details class="viewer-section comments-section" data-activity-section="${t.id}" data-section-kind="comments"${open}><summary>Comentarios <span class="comment-count">${commentsFor(t.id).length}</span></summary><div class="viewer-section-inner"><form class="comment-form" data-comment-form="${t.id}"><label class="comment-input-label" for="comment-input-${t.id}">Añade un comentario</label><div class="comment-compose"><textarea id="comment-input-${t.id}" data-comment-input="${t.id}" maxlength="2000" rows="2" placeholder="Añade un comentario" required>${esc(commentDrafts.get(Number(t.id))||'')}</textarea><button type="submit" class="btn comment-submit" aria-label="Publicar comentario de la actividad ${esc(t.annex)}" title="Publicar comentario">↑</button></div><span class="comment-feedback" data-comment-feedback="${t.id}" role="status"></span></form><div data-comment-feed="${t.id}">${commentListHTML(t)}</div></div></details>`;
+ const composer=canPostComment()?`<form class="comment-form" data-comment-form="${t.id}"><label class="comment-input-label" for="comment-input-${t.id}">Añade un comentario</label><div class="comment-compose"><textarea id="comment-input-${t.id}" data-comment-input="${t.id}" maxlength="2000" rows="2" placeholder="Añade un comentario" required>${esc(commentDrafts.get(Number(t.id))||'')}</textarea><button type="submit" class="btn comment-submit" aria-label="Publicar comentario de la actividad ${esc(t.annex)}" title="Publicar comentario">↑</button></div><span class="comment-feedback" data-comment-feedback="${t.id}" role="status"></span></form>`:`<p class="comment-readonly-note">Puedes consultar los comentarios. Tu permiso actual no permite publicar mensajes.</p>`;
+ return `<details class="viewer-section comments-section" data-activity-section="${t.id}" data-section-kind="comments"${open}><summary>Comentarios <span class="comment-count">${commentsFor(t.id).length}</span></summary><div class="viewer-section-inner">${composer}<div data-comment-feed="${t.id}">${commentListHTML(t)}</div></div></details>`;
 }
 function viewerLinkedActivity(value){
  if(!value)return 'Ninguna';
@@ -494,7 +497,7 @@ $('board').addEventListener('submit',async event=>{
  const form=event.target.closest('form[data-comment-form]');
  if(!form)return;
  event.preventDefault();
- if(!isSignedIn())return;
+ if(!canPostComment())return;
  const activityId=Number(form.dataset.commentForm),activity=task(activityId);
  if(!activity)return;
  const input=form.querySelector('textarea[data-comment-input]'),button=form.querySelector('button[type="submit"]'),feedback=form.querySelector('.comment-feedback');
