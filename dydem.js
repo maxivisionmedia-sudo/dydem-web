@@ -333,19 +333,22 @@ function canApproveStage(t,i){
 }
 function approvalStageSummary(t,i,editable=false){
  const responsible=stagePeople(t,i),approved=new Set(approvedPeople(t,i));
- const people=responsible.length?responsible.map(id=>
-  `<div class="approval-person ${approved.has(id)?'approved':'waiting'}"><span class="approval-person-mark">${approved.has(id)?'✓':'○'}</span>
-  <span class="approval-person-name">${esc(responsibleName(id))}</span>
-  <span class="approval-person-state">${approved.has(id)?'Aprobó':'Pendiente'}</span></div>`).join('') :
-  '<p class="muted approval-empty">Sin responsables asignados</p>';
+ const confirmed=responsible.filter(id=>approved.has(id));
+ const pending=responsible.filter(id=>!approved.has(id));
+ const namesList=(ids,empty)=>ids.length?
+  `<ul class="approval-compact-names">${ids.map(id=>`<li>${esc(responsibleName(id))}</li>`).join('')}</ul>`:
+  `<span class="approval-compact-empty">${empty}</span>`;
  const myVote=canApproveStage(t,i);
  const prevReady=i===1?t.steps[0]:i===2?t.steps[1]:(t.steps[2]&&t.steps[3]);
  const mine=approved.has(currentAccount?.id);
  const vote=myVote?`<label class="approval-vote"><input type="checkbox" data-vote-stage="${i}" data-id="${t.id}" ${mine?'checked':''} ${!prevReady&&!mine?'disabled':''}>
  <span>${mine?'He aprobado esta etapa':'Confirmar mi aprobación'}</span></label>`:'';
  const config=isAdmin()?`<button type="button" class="btn secondary approval-config" data-edit="${i}" data-id="${t.id}">Asignar responsables</button>`:'';
- return `<div class="approval-stage"><div class="approval-stage-label">Usuarios Responsables
- <small>${approved.size} de ${responsible.length} aprobaciones</small></div><div class="approval-people">${people}</div>${vote}${config}</div>`;
+ return `<div class="approval-compact">
+  <div class="approval-compact-line"><b>Pendientes:</b>${namesList(pending,responsible.length?'Ninguno':'Sin responsables asignados')}</div>
+  <div class="approval-compact-line"><b>Confirmaron:</b>${namesList(confirmed,'Ninguno')}</div>
+  ${vote||config?`<div class="approval-compact-actions">${vote}${config}</div>`:''}
+ </div>`;
 }
 async function applyApprovalResponse(data){
  if(!data?.data||!Number.isInteger(Number(data.revision)))throw Error('El servidor no confirmó la aprobación');
@@ -572,7 +575,7 @@ function viewerCard(t){
  const stageOpen=sectionIsOpen(t.id,'stages')?' open':'';
  const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
 
- const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><span>${approvalStageSummary(t,1)}</span></div><div class="viewer-step"><b>3. Autorizado:</b><span>${approvalStageSummary(t,2)}</span></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><span>${approvalStageSummary(t,4)}</span></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span>${viewerAttachmentLinks(t)}<small>${t.steps[5]?'Requisito cumplido':'Requisito pendiente'}</small></span></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
+ const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span>${viewerAttachmentLinks(t)}<small>${t.steps[5]?'Requisito cumplido':'Requisito pendiente'}</small></span></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
  return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}</div></article>`;
 }
 function isMobileTimeline(){return typeof window!=='undefined' && window.matchMedia('(max-width: 760px)').matches}
