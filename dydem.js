@@ -679,7 +679,7 @@ function hybridReadOnlyStage(t,i){
  </div>`;
 }
 function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{
- if(approvalStageKey(i)!==null)return `<div class="viewer-step approval-stage-readonly"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}</div></div>`;
+ if(approvalStageKey(i)!==null&&!isAdmin())return `<div class="viewer-step approval-stage-readonly"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}</div></div>`;
  if(isCustom()&&!canEditStep(i))return hybridReadOnlyStage(t,i);const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
 if(i===3){const v=t.progress;detail=`<div class="row" style="margin-top:6px"><span class="muted">Avance de obra</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="progress" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
 if(i===5){
