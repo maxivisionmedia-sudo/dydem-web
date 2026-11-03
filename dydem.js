@@ -70,7 +70,7 @@ function permissionChooser(prefix,p){
   `<label class="permission-item"><input type="checkbox" data-custom-step="${i}" ${perms.steps[i]?'checked':''}><span><b>${i+1}. ${esc(name)}</b>${i===0?'<small>Descripción, fechas y dependencias</small>':''}</span></label>`).join('')+
  `<label class="permission-item"><input type="checkbox" data-custom-action="add" ${perms.add?'checked':''}><span><b>Agregar actividades</b></span></label>
  <label class="permission-item"><input type="checkbox" data-custom-action="delete" ${perms.delete?'checked':''}><span><b>Eliminar actividades</b></span></label>
- <label class="permission-item"><input type="checkbox" data-custom-action="comment" ${perms.comment?'checked':''}><span><b>Publicar comentarios</b><small>Sin este permiso puede leer los comentarios existentes</small></span></label></div>`;
+ <label class="permission-item"><input type="checkbox" data-custom-action="comment" ${perms.comment?'checked':''}><span><b>Publicar notas</b><small>Sin este permiso puede leer los comentarios existentes</small></span></label></div>`;
 }
 function readPermissions(root){
  const docAdd=!!root.querySelector('[data-custom-action="doc_add"]')?.checked;
@@ -82,7 +82,7 @@ function readPermissions(root){
   doc_add:docAdd,doc_delete:docDelete};
 }
 function roleLabel(role){return role==='admin'?'Administrador':role==='custom'?'Personalizado':'Visualizador'}
-function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps.map((v,i)=>i!==5&&v?names[i]:null).filter(Boolean);if(p.doc_add)a.push('Documentado: Añadir');if(p.doc_delete)a.push('Documentado: Eliminar');if(p.add)a.push('Agregar actividades');if(p.delete)a.push('Eliminar actividades');if(p.comment)a.push('Publicar comentarios');return a.length?a.join(', '):'Solo lectura y ver comentarios'}
+function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps.map((v,i)=>i!==5&&v?names[i]:null).filter(Boolean);if(p.doc_add)a.push('Documentado: Añadir');if(p.doc_delete)a.push('Documentado: Eliminar');if(p.add)a.push('Agregar actividades');if(p.delete)a.push('Eliminar actividades');if(p.comment)a.push('Publicar notas');return a.length?a.join(', '):'Solo lectura y ver comentarios'}
 
 function syncState(message,error=false,busy=false){const el=$('sync-state');if(!el)return;el.textContent=message;el.classList.toggle('is-error',error);el.classList.toggle('is-busy',busy)}
 function messageError(err){return (err&&err.message)||String(err||'Error desconocido')}
@@ -376,14 +376,14 @@ function displayCommentTime(value){
 }
 function commentListHTML(t){
  const comments=commentsFor(t.id);
- if(!comments.length)return '<div class="comment-empty">Todavía no hay comentarios.</div>';
+ if(!comments.length)return '<div class="comment-empty">Todavía no hay notas.</div>';
  return `<div class="comment-list">${comments.map(c=>`<article class="comment-item"><span class="comment-avatar" aria-hidden="true">👤</span><div class="comment-bubble"><div class="comment-meta"><b>${esc(c.author_name||'Usuario')}</b><time>${esc(displayCommentTime(c.created_at))}</time>${isAdmin()?`<button type="button" class="comment-delete" data-delete-comment="${Number(c.id)}" data-comment-activity="${Number(t.id)}" aria-label="Eliminar comentario" title="Eliminar este comentario">Eliminar</button>`:""}</div><div class="comment-text">${esc(c.body)}</div></div></article>`).join('')}</div>`;
 }
 function sectionIsOpen(id,name){return sectionOpen.get(name+':'+id)!==false}
 function commentsSection(t){
  const open=sectionIsOpen(t.id,'comments')?' open':'';
- const composer=canPostComment()?`<form class="comment-form" data-comment-form="${t.id}"><label class="comment-input-label" for="comment-input-${t.id}">Añade un comentario</label><div class="comment-compose"><textarea id="comment-input-${t.id}" data-comment-input="${t.id}" maxlength="2000" rows="2" placeholder="Añade un comentario" required>${esc(commentDrafts.get(Number(t.id))||'')}</textarea><button type="submit" class="btn comment-submit" aria-label="Publicar comentario de la actividad ${esc(t.annex)}" title="Publicar comentario">↑</button></div><span class="comment-feedback" data-comment-feedback="${t.id}" role="status"></span></form>`:`<p class="comment-readonly-note">Puedes consultar los comentarios. Tu permiso actual no permite publicar mensajes.</p>`;
- return `<details class="viewer-section comments-section" data-activity-section="${t.id}" data-section-kind="comments"${open}><summary>Comentarios <span class="comment-count">${commentsFor(t.id).length}</span></summary><div class="viewer-section-inner">${composer}<div data-comment-feed="${t.id}">${commentListHTML(t)}</div></div></details>`;
+ const composer=canPostComment()?`<form class="comment-form" data-comment-form="${t.id}"><label class="comment-input-label" for="comment-input-${t.id}">Añade una nota</label><div class="comment-compose"><textarea id="comment-input-${t.id}" data-comment-input="${t.id}" maxlength="2000" rows="2" placeholder="Añade una nota" required>${esc(commentDrafts.get(Number(t.id))||'')}</textarea><button type="submit" class="btn comment-submit" aria-label="Publicar nota de la actividad ${esc(t.annex)}" title="Publicar nota">↑</button></div><span class="comment-feedback" data-comment-feedback="${t.id}" role="status"></span></form>`:`<p class="comment-readonly-note">Puedes consultar las notas. Tu permiso actual no permite publicar.</p>`;
+ return `<details class="viewer-section comments-section" data-activity-section="${t.id}" data-section-kind="comments"${open}><summary>Notas <span class="comment-count">${commentsFor(t.id).length}</span></summary><div class="viewer-section-inner">${composer}<div data-comment-feed="${t.id}">${commentListHTML(t)}</div></div></details>`;
 }
 function viewerLinkedActivity(value){
  if(!value)return 'Ninguna';
@@ -570,7 +570,7 @@ function viewerCard(t){
  const stageOpen=sectionIsOpen(t.id,'stages')?' open':'';
  const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
  const verification=Math.max(0,Math.min(100,Number(t.verification)||0));
- const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><span>${esc(t.reviewers||'Pendiente')}</span></div><div class="viewer-step"><b>3. Autorizado:</b><span>${esc(t.authorizer||'Pendiente')}</span></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%</span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><span>${verification}%</span></div><div class="viewer-progress"><div style="width:${verification}%"></div></div><div class="viewer-step"><b>6. Documentado (opcional):</b><span>${viewerAttachmentLinks(t)}</span></div><div class="viewer-step"><b>7. Completado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'No'}</span></div></div></details>`;
+ const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><span>${approvalStageSummary(t,1)}</span></div><div class="viewer-step"><b>3. Autorizado:</b><span>${approvalStageSummary(t,2)}</span></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><span>${approvalStageSummary(t,4)}</span></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span>${viewerAttachmentLinks(t)}<small>${t.steps[5]?'Requisito cumplido':'Requisito pendiente'}</small></span></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
  return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}</div></article>`;
 }
 function isMobileTimeline(){return typeof window!=='undefined' && window.matchMedia('(max-width: 760px)').matches}
@@ -637,6 +637,7 @@ window.addEventListener('resize',()=>{
 });
 function render(){const w=weekInfo();document.querySelector('header small').textContent=`CONTROL DE OBRA · SEMANA ${w.week} / ${w.year}`;document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;let q=$('search').value.toLowerCase();const counts={'Por empezar':0,'En proceso':0,'Terminado':0};tasks.forEach(t=>counts[status(t)]++);$('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];$('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];$('board').innerHTML=['Por empezar','En proceso','Terminado'].map(st=>{const list=tasks.filter(t=>status(t)===st&&(`${t.id} ${t.title}`).toLowerCase().includes(q));return `<section class="column"><h2>${st} (${counts[st]})</h2>${list.length?list.map(card).join(''):'<div class="empty">Sin actividades</div>'}</section>`}).join('');setTimelineButtonLabel();$('timeline').innerHTML=timelineHTML(false,compactTimeline,isMobileTimeline());}
 function hybridReadOnlyStage(t,i){
+ if(approvalStageKey(i)!==null)return `<div class="hybrid-readonly-step" data-step-readonly="${i}"><b class="hybrid-read-label">${i+1}. ${esc(names[i])}:</b><div class="hybrid-read-value">${approvalStageSummary(t,i)}</div></div>`;
  const pct=value=>Math.max(0,Math.min(100,Number(value)||0));
  let content='';
  let progress='';
@@ -650,15 +651,15 @@ function hybridReadOnlyStage(t,i){
   content=esc(t.authorizer||'Pendiente');
  }else if(i===3||i===4){
   const value=pct(i===3?t.progress:t.verification);
-  content=`<strong>${value}%</strong>`;
+  content=`<strong>${value}%</strong>${i===3?`<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small>`:''}`;
   progress=`<div class="viewer-progress hybrid-progress"><div style="width:${value}%"></div></div>`;
  }else if(i===5){
-  content=`${viewerAttachmentLinks(t)}<small>Documentado: ${t.steps[5]?'Sí':'No'}</small>`;
+  content=`${viewerAttachmentLinks(t)}<small>Evidencia: ${t.steps[5]?'Requisito cumplido':'Pendiente para finalizar'}</small>`;
  }else if(i===6){
   content=t.steps[6]?esc(t.completedDate||'Sí'):'No';
  }
  return `<div class="hybrid-readonly-step" data-step-readonly="${i}">
-  <b class="hybrid-read-label">${i+1}. ${esc(names[i])}${i===5?' (opcional)':''}:</b>
+  <b class="hybrid-read-label">${i+1}. ${esc(names[i])}:</b>
   <div class="hybrid-read-value">${content}</div>
   ${progress}
  </div>`;
@@ -668,8 +669,10 @@ if(i===1)detail=`<div class="detail">Revisores: ${esc(t.reviewers||'Pendiente')}
 if(i===2)detail=`<div class="detail">Autorizó: ${esc(t.authorizer||'Pendiente')}</div>`;
 if(i===3||i===4){let v=i===3?t.progress:t.verification;detail=`<div class="row" style="margin-top:6px"><span class="muted">${i===3?'Avance de obra':'Verificación'}</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="${i===3?'progress':'verification'}" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
 if(i===5)detail=`<div class="detail">${viewerAttachmentLinks(t)}</div>`;
+if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que terminó la obra</label><input type="date" data-id="${t.id}" data-field="workCompletedDate" ${canEdit?'':'disabled'} value="${esc(t.workCompletedDate||'')}"></div>`;
+if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true);
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
-return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${(i===5&&isCustom())||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}${i===5?' (opcional)':''}</label><details><summary>Ver / editar datos</summary>${detail}${[1,2,5].includes(i)&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">${i===5?'Gestionar anexos':'Editar datos'}</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}</div></article>`}
+return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}</div></article>`}
 let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='edit'&&canEditStep(action.step))&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
 function close(){if(attachmentUploadBusy){alert('La carga de archivos sigue en curso. Espera a que termine.');return}active=null;$('modal').hidden=true;render()}
 $('modal-cancel').onclick=close;
@@ -856,7 +859,7 @@ $('board').addEventListener('click',async event=>{
  const activityId=Number(button.dataset.commentActivity),commentId=Number(button.dataset.deleteComment);
  const activity=task(activityId);
  if(!activity || !commentsFor(activityId).some(c=>Number(c.id)===commentId))return;
- if(!confirm('¿Eliminar definitivamente este comentario? Esta acción no se puede deshacer.'))return;
+ if(!confirm('¿Eliminar definitivamente esta nota? Esta acción no se puede deshacer.'))return;
  const section=button.closest('.comments-section');
  const feedback=section?.querySelector('.comment-feedback');
  button.disabled=true;
@@ -873,7 +876,7 @@ $('board').addEventListener('click',async event=>{
    if(feed)feed.innerHTML=commentListHTML(activity);
    const count=section.querySelector('.comment-count');
    if(count)count.textContent=String(commentsFor(activityId).length);
-   if(feedback)feedback.textContent='Comentario eliminado.';
+   if(feedback)feedback.textContent='Nota eliminada.';
   }
  }catch(error){
   if(feedback)feedback.textContent='No se pudo eliminar: '+messageError(error);
@@ -900,8 +903,8 @@ $('board').addEventListener('submit',async event=>{
   if(feed)feed.innerHTML=commentListHTML(activity);
   const count=form.closest('.comments-section').querySelector('.comment-count');
   if(count)count.textContent=String(commentsFor(activityId).length);
-  feedback.textContent='Comentario publicado.';
- }catch(error){feedback.textContent='No se pudo publicar: '+messageError(error)}
+  feedback.textContent='Nota publicada.';
+ }catch(error){feedback.textContent='No se pudo publicar la nota: '+messageError(error)}
  finally{button.disabled=false}
 });
 $('board').addEventListener('change',e=>{
