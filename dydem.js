@@ -63,14 +63,14 @@ function canPostComment(){return isAdmin()||(isCustom()&&accountPermissions().co
 function stageForField(f){return (['title','start','end','before','after'].includes(f))?0:f==='progress'||f==='workCompletedDate'?3:f==='completedDate'?6:-1}
 function permissionChooser(prefix,p){
  const perms=p&&Array.isArray(p.steps)?p:emptyPermissions();
- const documentado=`<fieldset class="permission-documentado"><legend>6. Documentado</legend>
- <label class="permission-item"><input type="checkbox" data-custom-action="doc_add" ${perms.doc_add?'checked':''}><span><b>Añadir información</b><small>Subir y registrar archivos en Documentado</small></span></label>
- <label class="permission-item"><input type="checkbox" data-custom-action="doc_delete" ${perms.doc_delete?'checked':''}><span><b>Eliminar información</b><small>Quitar archivos de Documentado</small></span></label></fieldset>`;
+ const documentado=`<fieldset class="permission-documentado"><legend>6. Evidencia</legend>
+ <label class="permission-item"><input type="checkbox" data-custom-action="doc_add" ${perms.doc_add?'checked':''}><span><b>Añadir información</b><small>Subir y registrar archivos en Evidencia</small></span></label>
+ <label class="permission-item"><input type="checkbox" data-custom-action="doc_delete" ${perms.doc_delete?'checked':''}><span><b>Eliminar información</b><small>Quitar archivos de Evidencia</small></span></label></fieldset>`;
  return '<div class="permission-choices">'+names.map((name,i)=>i===5?documentado:
   `<label class="permission-item"><input type="checkbox" data-custom-step="${i}" ${perms.steps[i]?'checked':''}><span><b>${i+1}. ${esc(name)}</b>${i===0?'<small>Descripción, fechas y dependencias</small>':''}</span></label>`).join('')+
  `<label class="permission-item"><input type="checkbox" data-custom-action="add" ${perms.add?'checked':''}><span><b>Agregar actividades</b></span></label>
  <label class="permission-item"><input type="checkbox" data-custom-action="delete" ${perms.delete?'checked':''}><span><b>Eliminar actividades</b></span></label>
- <label class="permission-item"><input type="checkbox" data-custom-action="comment" ${perms.comment?'checked':''}><span><b>Publicar notas</b><small>Sin este permiso puede leer los comentarios existentes</small></span></label></div>`;
+ <label class="permission-item"><input type="checkbox" data-custom-action="comment" ${perms.comment?'checked':''}><span><b>Publicar notas</b><small>Sin este permiso puede leer las notas existentes</small></span></label></div>`;
 }
 function readPermissions(root){
  const docAdd=!!root.querySelector('[data-custom-action="doc_add"]')?.checked;
@@ -82,7 +82,7 @@ function readPermissions(root){
   doc_add:docAdd,doc_delete:docDelete};
 }
 function roleLabel(role){return role==='admin'?'Administrador':role==='custom'?'Personalizado':'Visualizador'}
-function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps.map((v,i)=>i!==5&&v?names[i]:null).filter(Boolean);if(p.doc_add)a.push('Documentado: Añadir');if(p.doc_delete)a.push('Documentado: Eliminar');if(p.add)a.push('Agregar actividades');if(p.delete)a.push('Eliminar actividades');if(p.comment)a.push('Publicar notas');return a.length?a.join(', '):'Solo lectura y ver comentarios'}
+function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps.map((v,i)=>i!==5&&v?names[i]:null).filter(Boolean);if(p.doc_add)a.push('Evidencia: Añadir');if(p.doc_delete)a.push('Evidencia: Eliminar');if(p.add)a.push('Agregar actividades');if(p.delete)a.push('Eliminar actividades');if(p.comment)a.push('Publicar notas');return a.length?a.join(', '):'Solo lectura y ver notas'}
 
 function syncState(message,error=false,busy=false){const el=$('sync-state');if(!el)return;el.textContent=message;el.classList.toggle('is-error',error);el.classList.toggle('is-busy',busy)}
 function messageError(err){return (err&&err.message)||String(err||'Error desconocido')}
@@ -887,7 +887,7 @@ $('board').addEventListener('click',async event=>{
  const button=event.target.closest('button[data-delete-comment]');
  if(!button)return;
  if(!isAdmin()){
-  alert('Solo los administradores pueden eliminar comentarios.');
+  alert('Solo los administradores pueden eliminar notas.');
   return;
  }
  const activityId=Number(button.dataset.commentActivity),commentId=Number(button.dataset.deleteComment);
@@ -1125,9 +1125,21 @@ function printWindow(title,content,css,landscape=false){
 }
 function pdf(){
  const wi=weekInfo(),tr=(k,v)=>`<tr><th>${esc(k)}</th><td>${esc(v??'—')}</td></tr>`;
+ const approvalText=(t,i)=>{const users=stagePeople(t,i),accepted=new Set(approvedPeople(t,i));return users.length?users.map(id=>responsibleName(id)+' — '+(accepted.has(id)?'Aprobó':'Pendiente')).join(' | '):'Sin responsables asignados'};
  const body=tasks.map(t=>{
-  const current=t.steps[6]?'Completado':names[Math.max(0,t.steps.findIndex(x=>!x))];
-  return `<section class="activity"><h2>Anexo ${esc(t.annex)} · ${esc(t.title)}</h2><table>${tr('Semana de alta',t.weekStart+' al '+t.weekEnd)}${tr('Etapa actual',current)}${tr('Estado',status(t))}${tr('Inicio tentativo',t.start)}${tr('Final tentativo',t.end)}${tr('Actividad previa',t.before?task(t.before)?.annex||t.before:'Ninguna')}${tr('Actividad posterior',t.after?task(t.after)?.annex||t.after:'Ninguna')}${t.reviewers?tr('Revisores',t.reviewers):''}${t.reviewAnnex?tr('Código de revisión',t.reviewAnnex):''}${t.authorizer?tr('Autorizó',t.authorizer):''}${tr('Avance de obra',t.progress+' %')}${tr('Verificación',t.verification+' %')}${t.attachments.length?tr('Documentos',t.attachments.map(a=>a.name).join(', ')):''}${t.completedDate?tr('Fecha de compleción',t.completedDate):''}</table></section>`;
+  const current=t.steps[6]?'Finalizado':names[Math.max(0,t.steps.findIndex(x=>!x))];
+  return `<section class="activity"><h2>Anexo ${esc(t.annex)} · ${esc(t.title)}</h2><table>
+  ${tr('Semana de alta',t.weekStart+' al '+t.weekEnd)}${tr('Etapa actual',current)}${tr('Estado',status(t))}
+  ${tr('Inicio tentativo',t.start)}${tr('Final tentativo',t.end)}
+  ${tr('Actividad previa',t.before?task(t.before)?.annex||t.before:'Ninguna')}
+  ${tr('Actividad posterior',t.after?task(t.after)?.annex||t.after:'Ninguna')}
+  ${tr('Revisión · Usuarios Responsables',approvalText(t,1))}
+  ${tr('Autorización · Usuarios Responsables',approvalText(t,2))}
+  ${tr('Avance de Obra',t.progress+' %')}${tr('Fecha real de término de obra',t.workCompletedDate||'Sin fecha')}
+  ${tr('Verificación · Usuarios Responsables',approvalText(t,4))}
+  ${tr('Evidencia obligatoria',t.attachments.length?t.attachments.map(a=>a.name).join(', '):'Pendiente')}
+  ${tr('Finalizado',t.steps[6]?'Sí':'Pendiente')}
+  ${t.completedDate?tr('Fecha de finalización',t.completedDate):''}</table></section>`;
  }).join('');
  const content=`<h1>Actividades Obra DYDEM</h1><p>Semana ${wi.week} · ${wi.start} al ${wi.end} · Reporte generado ${new Date().toLocaleDateString('es-MX')}</p><p>Total: ${tasks.length}</p>${body}`;
  const css=`h1{font-size:19px}h2{font-size:12px}.activity{border:1px solid #bdc8d8;border-radius:5px;padding:9px;margin:12px 0;break-inside:avoid}table{width:100%;border-collapse:collapse}td,th{border:1px solid #cfd8e4;padding:5px 7px;text-align:left;vertical-align:top}th{background:#edf1f7;width:35%}`;
@@ -1204,7 +1216,10 @@ function pdfTimeline(){
  .tl-compact .tl-project-card.tl-pending{top:5px;height:20px}
  .tl-compact .tl-card-title{font-size:11px;line-height:1.1}
  .tl-compact .tl-card-progress{height:4px}
- `;
+ .tl-project-card.tl-built{background:#b9dbff!important;border-color:#2871ba!important;color:#163f74!important}
+ .tl-project-card.tl-built .tl-card-progress{background:#cde4fc!important}
+ .tl-project-card.tl-built .tl-card-progress>div{background:#327bc7!important}
+ `
  printWindow('DYDEM - Cronograma horizontal a color',body,css,true);
 }
 
