@@ -597,7 +597,11 @@ function timelineHTML(print=false,compact=false,mobile=isMobileTimeline()&&!prin
  const pos=n=>(100*(n-d.lo)/d.total).toFixed(5),width=n=>(100*n/d.total).toFixed(5);
  const todayVisible=todayDay>=d.lo&&todayDay<=d.hi;
  const weeks=d.weeks.map(w=>`<div class="tl-week-ref" style="width:${width(7)}%">Sem-${esc(w.label.split(' · ')[0].slice(1))}</div>`).join('');
- const days=Array.from({length:d.total},(_,i)=>{const n=d.lo+i,dt=new Date(n*86400000);return `<div class="tl-day-ref ${Math.floor(i/7)%2===0?'week-blue':'week-white'} ${n===todayDay?'is-today':''}" title="${dayISO(n)}">${dayNames[i%7]} ${String(dt.getUTCDate()).padStart(2,'0')}</div>`}).join('');
+ const days=Array.from({length:d.total},(_,i)=>{
+  const n=d.lo+i,dt=new Date(n*86400000),dayNumber=String(dt.getUTCDate()).padStart(2,'0');
+  const label=compact&&!print?(mobile?dayNumber:dayNames[i%7].slice(0,2)+' '+dayNumber):dayNames[i%7]+' '+dayNumber;
+  return `<div class="tl-day-ref ${Math.floor(i/7)%2===0?'week-blue':'week-white'} ${n===todayDay?'is-today':''}" title="${dayISO(n)} · ${dayNames[i%7]}">${label}</div>`;
+ }).join('');
  const head=`<div class="tl-head-ref"><div class="tl-weeks-ref">${weeks}</div><div class="tl-days-ref">${days}</div>${todayVisible?`<span class="tl-today-tag" style="left:${pos(todayDay+.5)}%">HOY</span>`:''}</div>`;
  const rows=tasks.map(t=>{
   const words=t.title.trim().split(/\s+/),limit=mobile?4:6,title=words.slice(0,limit).join(' ')+(words.length>limit?'…':'');
@@ -606,7 +610,7 @@ function timelineHTML(print=false,compact=false,mobile=isMobileTimeline()&&!prin
   const projected=start!==null&&end!==null&&end>=start;
   const cardStart=projected?start:(real!==null?real:d.lo),cardEnd=projected?end:cardStart;
   const extended=real!==null&&projected&&real>end;
-  const span=Math.max(1,cardEnd-cardStart+1),tiny=mobile&&span===1;
+  const span=Math.max(1,cardEnd-cardStart+1),tiny=(mobile||(compact&&!print))&&span===1;
   const label=print?`<span class="tl-annex">${esc(t.annex)}</span><span class="tl-title-text">${esc(title)}</span>`:`<button class="tl-card-link" data-jump="${t.id}" title="Ir a la actividad: ${esc(t.title)}"><span class="tl-annex">${esc(t.annex)}</span><span class="tl-title-text">${esc(title)}</span></button>`;
   const card=`<div class="tl-project-card ${status(t)==='Por empezar'?'tl-pending':status(t)==='Terminado'?'tl-finished':isBuilt(t)?'tl-built':'tl-active'} ${tiny?'tl-brief':''}" style="left:${pos(cardStart)}%;width:${width(span)}%" title="Proyectado: ${esc(t.start||'Sin fecha')} a ${esc(t.end||'Sin fecha')} · Avance: ${progress}%"><div class="tl-card-top"><div class="tl-card-title">${statusDot(t)}${label}</div>${mobile?`<span class="tl-percent-inline">${progress}%</span>`:''}</div>${mobile||compact?'':`<div class="tl-card-percent">Obra a: ${progress}%</div>`}${mobile?'':`<div class="tl-card-progress"><div style="width:${progress}%"></div></div>`}</div>`;
   const red=extended?`<div class="tl-delay" style="left:${pos(end+1)}%;width:${width(real-end)}%" title="Fin proyectado: ${t.end} · Fin de obra real: ${t.workCompletedDate}"><span>Finalizó en</span><span class="tl-delay-arrow">➜</span></div>`:'';
