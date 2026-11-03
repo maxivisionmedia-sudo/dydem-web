@@ -571,7 +571,7 @@ function viewerCard(t){
  const collapsed=collapsedActivities.has(String(t.id));
  const stageOpen=sectionIsOpen(t.id,'stages')?' open':'';
  const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
- const verification=Math.max(0,Math.min(100,Number(t.verification)||0));
+
  const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><span>${approvalStageSummary(t,1)}</span></div><div class="viewer-step"><b>3. Autorizado:</b><span>${approvalStageSummary(t,2)}</span></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><span>${approvalStageSummary(t,4)}</span></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span>${viewerAttachmentLinks(t)}<small>${t.steps[5]?'Requisito cumplido':'Requisito pendiente'}</small></span></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
  return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}</div></article>`;
 }
@@ -647,12 +647,8 @@ function hybridReadOnlyStage(t,i){
   content=`${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}
    <small>Debe completarse antes: ${esc(viewerLinkedActivity(t.before))}</small>
    <small>Solo después de: ${esc(viewerLinkedActivity(t.after))}</small>`;
- }else if(i===1){
-  content=`${esc(t.reviewers||'Pendiente')}${t.reviewAnnex?`<small>Referencia de revisión: ${esc(t.reviewAnnex)}</small>`:''}`;
- }else if(i===2){
-  content=esc(t.authorizer||'Pendiente');
- }else if(i===3||i===4){
-  const value=pct(i===3?t.progress:t.verification);
+ }else if(i===3){
+  const value=pct(t.progress);
   content=`<strong>${value}%</strong>${i===3?`<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small>`:''}`;
   progress=`<div class="viewer-progress hybrid-progress"><div style="width:${value}%"></div></div>`;
  }else if(i===5){
@@ -667,9 +663,7 @@ function hybridReadOnlyStage(t,i){
  </div>`;
 }
 function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{if(isCustom()&&!canEditStep(i))return hybridReadOnlyStage(t,i);const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
-if(i===1)detail=`<div class="detail">Revisores: ${esc(t.reviewers||'Pendiente')}\nAnexo de diagramas/especificaciones/materiales: ${esc(t.reviewAnnex||'Sin código')}</div>`;
-if(i===2)detail=`<div class="detail">Autorizó: ${esc(t.authorizer||'Pendiente')}</div>`;
-if(i===3||i===4){let v=i===3?t.progress:t.verification;detail=`<div class="row" style="margin-top:6px"><span class="muted">${i===3?'Avance de obra':'Verificación'}</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="${i===3?'progress':'verification'}" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
+if(i===3){const v=t.progress;detail=`<div class="row" style="margin-top:6px"><span class="muted">Avance de obra</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="progress" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
 if(i===5)detail=`<div class="detail">${viewerAttachmentLinks(t)}</div>`;
 if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que terminó la obra</label><input type="date" data-id="${t.id}" data-field="workCompletedDate" ${canEdit?'':'disabled'} value="${esc(t.workCompletedDate||'')}"></div>`;
 if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true);
