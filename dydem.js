@@ -329,7 +329,7 @@ async function loadResponsibleUsers(){
  availableResponsibles=Array.isArray(data)?data.map(p=>({id:String(p.id),display_name:String(p.display_name||'Usuario')})):[];
 }
 function canApproveStage(t,i){
- return isSignedIn()&&stagePeople(t,i).includes(currentAccount.id);
+ return isSignedIn()&&canEditStep(i)&&stagePeople(t,i).includes(currentAccount.id);
 }
 function approvalStageSummary(t,i,editable=false){
  const responsible=stagePeople(t,i),approved=new Set(approvedPeople(t,i));
@@ -343,7 +343,7 @@ function approvalStageSummary(t,i,editable=false){
  const mine=approved.has(currentAccount?.id);
  const vote=myVote?`<label class="approval-vote"><input type="checkbox" data-vote-stage="${i}" data-id="${t.id}" ${mine?'checked':''} ${!prevReady&&!mine?'disabled':''}>
  <span>${mine?'He aprobado esta etapa':'Confirmar mi aprobación'}</span></label>`:'';
- const config=canEditStep(i)?`<button type="button" class="btn secondary approval-config" data-edit="${i}" data-id="${t.id}">Asignar responsables</button>`:'';
+ const config=isAdmin()?`<button type="button" class="btn secondary approval-config" data-edit="${i}" data-id="${t.id}">Asignar responsables</button>`:'';
  return `<div class="approval-stage"><div class="approval-stage-label">Usuarios Responsables
  <small>${approved.size} de ${responsible.length} aprobaciones</small></div><div class="approval-people">${people}</div>${vote}${config}</div>`;
 }
@@ -669,7 +669,7 @@ if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que 
 if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true);
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
 return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}</div></article>`}
-let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='assign'&&canEditStep(action.step))&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
+let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
 function close(){if(attachmentUploadBusy){alert('La carga de archivos sigue en curso. Espera a que termine.');return}active=null;$('modal').hidden=true;render()}
 $('modal-cancel').onclick=close;
 function requiredDates(t){return !!t.start&&!!t.end&&t.end>=t.start}
@@ -683,15 +683,20 @@ function startup(){
  modal('Completar datos obligatorios',`Hay ${incomplete.length} actividad(es) con fechas pendientes. Puedes cerrarlas y completarlas después.`,fields,{type:'startup',ids:incomplete.map(t=>t.id)});
 }
 async function editStep(t,i){
- if(!canEditStep(i))return;
+ if(!canEditStep(i)||(approvalStageKey(i)!==null&&!isAdmin()))return;
  if(approvalStageKey(i)!==null){
-  try{await loadResponsibleUsers()}catch(err){alert('No se pudo cargar el directorio de usuarios: '+messageError(err));return}
+  let eligible=[];
+  try{
+   const {data,error}=await cloud.rpc('list_dydem_stage_responsibles',{p_stage:Number(i)});
+   if(error)throw error;
+   eligible=Array.isArray(data)?data:[];
+  }catch(err){alert('No se pudo consultar los usuarios con permiso para esta etapa: '+messageError(err));return}
   const chosen=new Set(stagePeople(t,i));
-  const options=availableResponsibles.map(u=>`<label class="approval-choice"><input type="checkbox" name="responsible" value="${esc(u.id)}" ${chosen.has(u.id)?'checked':''}><span>${esc(u.display_name)}</span></label>`).join('');
+  const options=eligible.map(u=>`<label class="approval-choice"><input type="checkbox" name="responsible" value="${esc(u.id)}" ${chosen.has(u.id)?'checked':''}><span>${esc(u.display_name)}</span></label>`).join('');
   const fields=`<fieldset class="responsible-chooser"><legend>Usuarios Responsables</legend>
-   ${options||'<p>No hay usuarios activos disponibles.</p>'}
+   ${options||'<p>No hay usuarios activos con permiso para esta etapa.</p>'}
    </fieldset><p class="muted">La etapa necesitará la aprobación individual de todos los seleccionados. Cambiar la asignación reiniciará las aprobaciones anteriores de esta etapa.</p>`;
-  modal(`${names[i]} · Actividad ${t.annex}`,'Selecciona uno o varios usuarios de DYDEM. Cada responsable aprobará con su propia cuenta.',fields,{type:'assign',id:t.id,step:i});
+  modal(`${names[i]} · Actividad ${t.annex}`,'Solo se muestran usuarios activos con permiso para esta etapa. Cada responsable aprobará con su propia cuenta.',fields,{type:'assign',id:t.id,step:i});
   return;
  }
  if(i===5){
@@ -866,7 +871,7 @@ $('board').addEventListener('click',async e=>{
  if(b.dataset.collapse){const id=String(t.id);if(collapsedActivities.has(id))collapsedActivities.delete(id);else collapsedActivities.add(id);persistCollapsed();render();return}
  if(b.dataset.delete){if(!canDeleteActivity())return;if(!confirm(`¿Eliminar actividad ${t.id}?`))return;syncState('Eliminando…',false,true);const {error}=await cloud.rpc('delete_activity',{p_id:t.id,p_expected_revision:revisions.get(Number(t.id))});if(error){alert('No se pudo eliminar: '+messageError(error));await reloadActivities(true);return}collapsedActivities.delete(String(t.id));persistCollapsed();await reloadActivities(true);return}
  if(b.dataset.rename){if(!canEditStep(0))return;let title=prompt('Descripción de la actividad:',t.title);if(title?.trim()){t.title=title.trim();save();render()}return}
- if(b.dataset.edit!==undefined){const i=Number(b.dataset.edit);if(canEditStep(i))editStep(t,i)}
+ if(b.dataset.edit!==undefined){const i=Number(b.dataset.edit);if((approvalStageKey(i)!==null?isAdmin():canEditStep(i)))editStep(t,i)}
 });
 document.addEventListener('toggle',event=>{
  const d=event.target;
@@ -985,8 +990,9 @@ $('board').addEventListener('change',e=>{
  }else return;
  save();render();
 });
-$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='assign'&&canEditStep(active.step)||active.type==='files'&&canAddDocument()))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=active.type==='files';let form=new FormData(e.target);let err='';try{
+$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='files'&&canAddDocument()))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=active.type==='files';let form=new FormData(e.target);let err='';try{
  if(active.type==='assign'){
+  if(!isAdmin())throw Error('Solo el Administrador puede asignar responsables.');
   const selected=[...$('modal-fields').querySelectorAll('input[name="responsible"]:checked')].map(n=>n.value);
   if(isDirty()){
    await save();if(isDirty())throw Error('Primero guarda los cambios pendientes de actividades.');
