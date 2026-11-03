@@ -39,9 +39,11 @@ function showLoginForm(message=''){
 const isAdmin=()=>!!currentAccount&&currentAccount.role==='admin'&&currentAccount.active;
 const isSignedIn=()=>!!currentAccount&&currentAccount.active;
 const isCustom=()=>isSignedIn()&&currentAccount.role==='custom';
-function emptyPermissions(){return {steps:[false,false,false,false,false,false,false],add:false,delete:false,comment:false}}
+function emptyPermissions(){return {steps:[false,false,false,false,false,false,false],add:false,delete:false,comment:false,doc_add:false,doc_delete:false}}
 function accountPermissions(){const p=currentAccount?.permissions;return p&&Array.isArray(p.steps)&&p.steps.length===7?p:emptyPermissions()}
-function canEditStep(i){return isAdmin()||(isCustom()&&accountPermissions().steps[Number(i)]===true)}
+function canAddDocument(){return isAdmin()||(isCustom()&&accountPermissions().doc_add===true)}
+function canDeleteDocument(){return isAdmin()||(isCustom()&&accountPermissions().doc_delete===true)}
+function canEditStep(i){return isAdmin()||(isCustom()&&(Number(i)===5?(canAddDocument()||canDeleteDocument()):accountPermissions().steps[Number(i)]===true))}
 function canEditAnyStep(){return names.some((_,i)=>canEditStep(i))}
 function canAddActivity(){return isAdmin()||(isCustom()&&accountPermissions().add===true)}
 function canDeleteActivity(){return isAdmin()||(isCustom()&&accountPermissions().delete===true)}
@@ -49,15 +51,26 @@ function canPostComment(){return isAdmin()||(isCustom()&&accountPermissions().co
 function stageForField(f){return (['title','start','end','before','after'].includes(f))?0:f==='reviewers'||f==='reviewAnnex'?1:f==='authorizer'?2:f==='progress'?3:f==='verification'?4:f==='attachments'?5:f==='completedDate'?6:-1}
 function permissionChooser(prefix,p){
  const perms=p&&Array.isArray(p.steps)?p:emptyPermissions();
- return '<div class="permission-choices">'+names.map((name,i)=>
+ const documentado=`<fieldset class="permission-documentado"><legend>6. Documentado</legend>
+ <label class="permission-item"><input type="checkbox" data-custom-action="doc_add" ${perms.doc_add?'checked':''}><span><b>Añadir información</b><small>Subir y registrar archivos en Documentado</small></span></label>
+ <label class="permission-item"><input type="checkbox" data-custom-action="doc_delete" ${perms.doc_delete?'checked':''}><span><b>Eliminar información</b><small>Quitar archivos de Documentado</small></span></label></fieldset>`;
+ return '<div class="permission-choices">'+names.map((name,i)=>i===5?documentado:
   `<label class="permission-item"><input type="checkbox" data-custom-step="${i}" ${perms.steps[i]?'checked':''}><span><b>${i+1}. ${esc(name)}</b>${i===0?'<small>Descripción, fechas y dependencias</small>':''}</span></label>`).join('')+
  `<label class="permission-item"><input type="checkbox" data-custom-action="add" ${perms.add?'checked':''}><span><b>Agregar actividades</b></span></label>
  <label class="permission-item"><input type="checkbox" data-custom-action="delete" ${perms.delete?'checked':''}><span><b>Eliminar actividades</b></span></label>
  <label class="permission-item"><input type="checkbox" data-custom-action="comment" ${perms.comment?'checked':''}><span><b>Publicar comentarios</b><small>Sin este permiso puede leer los comentarios existentes</small></span></label></div>`;
 }
-function readPermissions(root){return {steps:names.map((_,i)=>!!root.querySelector('[data-custom-step="'+i+'"]')?.checked),add:!!root.querySelector('[data-custom-action="add"]')?.checked,delete:!!root.querySelector('[data-custom-action="delete"]')?.checked,comment:!!root.querySelector('[data-custom-action="comment"]')?.checked}}
+function readPermissions(root){
+ const docAdd=!!root.querySelector('[data-custom-action="doc_add"]')?.checked;
+ const docDelete=!!root.querySelector('[data-custom-action="doc_delete"]')?.checked;
+ return {steps:names.map((_,i)=>i===5?(docAdd||docDelete):!!root.querySelector('[data-custom-step="'+i+'"]')?.checked),
+  add:!!root.querySelector('[data-custom-action="add"]')?.checked,
+  delete:!!root.querySelector('[data-custom-action="delete"]')?.checked,
+  comment:!!root.querySelector('[data-custom-action="comment"]')?.checked,
+  doc_add:docAdd,doc_delete:docDelete};
+}
 function roleLabel(role){return role==='admin'?'Administrador':role==='custom'?'Personalizado':'Visualizador'}
-function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps.map((v,i)=>v?names[i]:null).filter(Boolean);if(p.add)a.push('Agregar');if(p.delete)a.push('Eliminar');if(p.comment)a.push('Publicar comentarios');return a.length?a.join(', '):'Solo lectura y ver comentarios'}
+function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps.map((v,i)=>i!==5&&v?names[i]:null).filter(Boolean);if(p.doc_add)a.push('Documentado: Añadir');if(p.doc_delete)a.push('Documentado: Eliminar');if(p.add)a.push('Agregar actividades');if(p.delete)a.push('Eliminar actividades');if(p.comment)a.push('Publicar comentarios');return a.length?a.join(', '):'Solo lectura y ver comentarios'}
 
 function syncState(message,error=false,busy=false){const el=$('sync-state');if(!el)return;el.textContent=message;el.classList.toggle('is-error',error);el.classList.toggle('is-busy',busy)}
 function messageError(err){return (err&&err.message)||String(err||'Error desconocido')}
@@ -595,17 +608,17 @@ if(i===2)detail=`<div class="detail">Autorizó: ${esc(t.authorizer||'Pendiente')
 if(i===3||i===4){let v=i===3?t.progress:t.verification;detail=`<div class="row" style="margin-top:6px"><span class="muted">${i===3?'Avance de obra':'Verificación'}</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="${i===3?'progress':'verification'}" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
 if(i===5)detail=`<div class="detail">${viewerAttachmentLinks(t)}</div>`;
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
-return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${canEdit?'':'disabled'} ${t.steps[i]?'checked':''}>${i+1}. ${n}${i===5?' (opcional)':''}</label><details><summary>Ver / editar datos</summary>${detail}${[1,2,5].includes(i)&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">${i===5?'Gestionar anexos':'Editar datos'}</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}</div></article>`}
-let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='edit'&&canEditStep(action.step))&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';$('modal').hidden=false;}
+return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${(i===5&&isCustom())||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}${i===5?' (opcional)':''}</label><details><summary>Ver / editar datos</summary>${detail}${[1,2,5].includes(i)&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">${i===5?'Gestionar anexos':'Editar datos'}</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}</div></article>`}
+let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='edit'&&canEditStep(action.step))&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
 function close(){if(attachmentUploadBusy){alert('La carga de archivos sigue en curso. Espera a que termine.');return}active=null;$('modal').hidden=true;render()}
 $('modal-cancel').onclick=close;
 function requiredDates(t){return !!t.start&&!!t.end&&t.end>=t.start}
 function missing(){return tasks.filter(t=>!requiredDates(t)||t.steps[1]&&!t.reviewers.trim()||t.steps[2]&&!t.authorizer.trim()||t.steps[6]&&!t.completedDate)}
 function startup(){const incomplete=missing();if(!incomplete.length)return;const fields=incomplete.map(t=>`<fieldset style="border:1px solid #dce3ed;border-radius:8px"><legend>#${t.id} — ${esc(t.title.slice(0,75))}</legend><div class="row">${!requiredDates(t)?`<div class="field"><label>Inicio tentativo *</label><input type="date" name="start-${t.id}" value="${esc(t.start)}" required></div><div class="field"><label>Final tentativo *</label><input type="date" name="end-${t.id}" value="${esc(t.end)}" required></div>`:''}${t.steps[1]&&!t.reviewers.trim()?`<div class="field"><label>Personas que revisaron *</label><input name="reviewers-${t.id}" required></div>`:''}${t.steps[2]&&!t.authorizer.trim()?`<div class="field"><label>Persona que autorizó *</label><input name="authorizer-${t.id}" required></div>`:''}${t.steps[6]&&!t.completedDate?`<div class="field"><label>Fecha de compleción *</label><input type="date" name="completedDate-${t.id}" required></div>`:''}</div></fieldset>`).join('');modal('Completar datos obligatorios',`Hay ${incomplete.length} actividad(es) con datos obligatorios pendientes. Puedes cerrar y completarlos después; no se marcarán las etapas correspondientes hasta cumplir sus requisitos.`,fields,{type:'startup',ids:incomplete.map(t=>t.id)})}
-function editStep(t,i){if(!canEditStep(i))return;if(i===1)modal(`Revisión · Actividad ${t.id}`,'Indica las personas que realizaron la revisión. El código de anexo es opcional.',`<div class="field"><label>Nombre(s) de revisores *</label><textarea name="reviewers" required>${esc(t.reviewers)}</textarea></div><div class="field"><label>Código de anexo (opcional)</label><input name="reviewAnnex" value="${esc(t.reviewAnnex)}"></div>`,{type:'edit',id:t.id,step:i});if(i===2)modal(`Autorización · Actividad ${t.id}`,'Indica quién autorizó la actividad.',`<div class="field"><label>Nombre de quien autorizó *</label><input name="authorizer" value="${esc(t.authorizer)}" required></div>`,{type:'edit',id:t.id,step:i});if(i===5)modal(`Documentación · Actividad ${t.id}`,'Agrega imágenes, videos, documentos y otros anexos. Se almacenan en la nube y se comparten con el equipo.',`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple><p class="attachment-upload-help">Máximo de DYDEM: 500 MB por archivo. El almacenamiento actual de Supabase admite hasta 50 MB por archivo. DYDEM registra cada carga antes de enviarla y verifica su aparición en la actividad al finalizar. No cierres la ventana hasta recibir la confirmación.</p><span id="attachment-upload-status" role="status"></span></div><div id="attachment-list">${attachmentList(t)}</div>`,{type:'files',id:t.id,step:i})}
+function editStep(t,i){if(!canEditStep(i))return;if(i===1)modal(`Revisión · Actividad ${t.id}`,'Indica las personas que realizaron la revisión. El código de anexo es opcional.',`<div class="field"><label>Nombre(s) de revisores *</label><textarea name="reviewers" required>${esc(t.reviewers)}</textarea></div><div class="field"><label>Código de anexo (opcional)</label><input name="reviewAnnex" value="${esc(t.reviewAnnex)}"></div>`,{type:'edit',id:t.id,step:i});if(i===2)modal(`Autorización · Actividad ${t.id}`,'Indica quién autorizó la actividad.',`<div class="field"><label>Nombre de quien autorizó *</label><input name="authorizer" value="${esc(t.authorizer)}" required></div>`,{type:'edit',id:t.id,step:i});if(i===5)modal(`Documentación · Actividad ${t.id}`,canAddDocument()?'Añade archivos a la actividad. Quienes tienen permiso para eliminar también podrán quitarlos.':'Puedes quitar archivos existentes; no tienes permiso para subir archivos.',`${canAddDocument()?`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple><p class="attachment-upload-help">Máximo de DYDEM: 500 MB por archivo. El almacenamiento actual de Supabase admite hasta 50 MB por archivo. DYDEM registra cada carga antes de enviarla y verifica su aparición en la actividad al finalizar. No cierres la ventana hasta recibir la confirmación.</p><span id="attachment-upload-status" role="status"></span></div>`:''}<div id="attachment-list">${attachmentList(t)}</div>`,{type:'files',id:t.id,step:i})}
 function attachmentList(t){
- const files=t.attachments.map(a=>`<div class="attachment">${attachmentActions(t,a)}<button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button></div>`).join('');
- const pending=pendingForActivity(t.id).map(a=>`<div class="attachment pending-attachment"><span class="pending-attachment-info">⏳ <b>${esc(a.file_name)}</b><small> Pendiente: ${a.last_error?'No se pudo confirmar.':'Se recuperará automáticamente cuando esté completo.'} ${esc(a.last_error||'')}</small></span><button type="button" class="btn secondary" data-recover-upload="${esc(a.id)}" data-id="${t.id}">Comprobar</button></div>`).join('');
+ const files=t.attachments.map(a=>`<div class="attachment">${attachmentActions(t,a)}${canDeleteDocument()?`<button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button>`:''}</div>`).join('');
+ const pending=pendingForActivity(t.id).map(a=>`<div class="attachment pending-attachment"><span class="pending-attachment-info">⏳ <b>${esc(a.file_name)}</b><small> Pendiente: ${a.last_error?'No se pudo confirmar.':'Se recuperará automáticamente cuando esté completo.'} ${esc(a.last_error||'')}</small></span>${canAddDocument()?`<button type="button" class="btn secondary" data-recover-upload="${esc(a.id)}" data-id="${t.id}">Comprobar</button>`:''}</div>`).join('');
  return (files+pending)||'<span class="muted">No hay archivos adjuntos.</span>';
 }
 function canCheck(t,i){if(i>0&&!t.steps[i-1]&&!(i===6&&t.steps[4]))return 'Completa primero la etapa anterior.';if(i===0&&!requiredDates(t))return 'Completa las fechas tentativas de inicio y final.';if(i===1&&!t.reviewers.trim())return 'Introduce al menos un nombre de revisor.';if(i===2&&!t.authorizer.trim())return 'Introduce el nombre de quien autorizó.';if(i===3&&t.progress!==100)return 'El avance de obra debe llegar al 100 %.';if(i===4&&t.verification!==100)return 'La verificación debe llegar al 100 %.';if(i===6&&!t.completedDate)return 'Indica la fecha de compleción.';if(i===6&&t.before&&task(t.before)&&!task(t.before).steps[6])return 'La actividad anterior enlazada debe estar completada.';return ''}
@@ -614,7 +627,7 @@ function uncheck(t,i){if(isCustom()){t.steps[i]=false;return}if(i===5){t.steps[5
 function linkError(t,field,value){if(!value)return '';if(String(value)===String(t.id))return 'No se puede enlazar una actividad consigo misma.';if(field==='before'&&String(t.after)===String(value)||field==='after'&&String(t.before)===String(value))return 'Las dos dependencias no pueden apuntar a la misma actividad.';let next=task(value),seen=new Set([t.id]);while(next){if(seen.has(next.id))return 'Esta relación crearía un ciclo de dependencias.';seen.add(next.id);next=task(field==='before'?next.before:next.after)}return ''}
 // Storage privado de Supabase. metadata.path pertenece al bucket; nunca al navegador.
 async function putFile(t,file,intent){
- if(!canEditStep(5))throw Error('Sin permisos para adjuntar archivos');
+ if(!canAddDocument())throw Error('Sin permisos para adjuntar archivos');
  if(file.size>MAX_ATTACHMENT_BYTES)throw Error('No se permite subir archivos de más de 500 MB.');
  if(file.size>CURRENT_STORAGE_LIMIT_BYTES)throw Error('El archivo supera los 50 MB permitidos actualmente por el almacenamiento de Supabase. El máximo de la aplicación es 500 MB, pero el proyecto requiere ampliar su límite de Storage.');
  if(!intent?.id||!intent?.path)throw Error('Falta el registro previo de la carga');
@@ -722,6 +735,7 @@ function applyAttachmentServerData(activityId,data,revision){
  return next;
 }
 async function prepareAttachmentUpload(t,file){
+ if(!canAddDocument())throw Error('Sin permiso para añadir archivos');
  const available=pendingForActivity(t.id).find(a=>a.file_name===file.name&&Number(a.file_size)===file.size);
  if(available)return {id:available.id,path:available.storage_path,activity_id:t.id,
   name:available.file_name,size:Number(available.file_size),type:available.mime_type};
@@ -739,6 +753,7 @@ async function prepareAttachmentUpload(t,file){
  return data;
 }
 async function confirmUploadedAttachment(t,intent){
+ if(!canAddDocument())throw Error('Sin permiso para añadir archivos');
  const id=Number(t.id);
  const {data,error}=await cloud.rpc('complete_activity_upload',{p_upload_id:intent.id});
  if(error)throw error;
@@ -751,7 +766,7 @@ async function confirmUploadedAttachment(t,intent){
  return next;
 }
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
-async function deleteFile(meta){if(!canEditStep(5))throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
+async function deleteFile(meta){if(!canDeleteDocument())throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
 $('board').addEventListener('click',async e=>{
  const b=e.target.closest('button');if(!b)return;
  const t=task(b.dataset.id||b.dataset.delete||b.dataset.rename||b.dataset.collapse);
@@ -852,7 +867,7 @@ $('board').addEventListener('change',e=>{
  }else return;
  save();render();
 });
-$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='edit'&&canEditStep(active.step)||active.type==='files'&&canEditStep(5)))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=active.type==='files';let form=new FormData(e.target);let err='';try{if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','reviewers','authorizer','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(active.type==='edit'){let t=task(active.id);if(active.step===1){t.reviewers=String(form.get('reviewers')||'').trim();t.reviewAnnex=String(form.get('reviewAnnex')||'').trim();if(t.reviewers)autoCheck(t,1);if(!t.reviewers)err='Se requiere al menos un nombre de revisor.'}if(active.step===2){t.authorizer=String(form.get('authorizer')||'').trim();if(t.authorizer)autoCheck(t,2);if(!t.authorizer)err='El nombre de quien autorizó es obligatorio.'}}else if(active.type==='files'){
+$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='edit'&&canEditStep(active.step)||active.type==='files'&&canAddDocument()))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=active.type==='files';let form=new FormData(e.target);let err='';try{if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','reviewers','authorizer','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(active.type==='edit'){let t=task(active.id);if(active.step===1){t.reviewers=String(form.get('reviewers')||'').trim();t.reviewAnnex=String(form.get('reviewAnnex')||'').trim();if(t.reviewers)autoCheck(t,1);if(!t.reviewers)err='Se requiere al menos un nombre de revisor.'}if(active.step===2){t.authorizer=String(form.get('authorizer')||'').trim();if(t.authorizer)autoCheck(t,2);if(!t.authorizer)err='El nombre de quien autorizó es obligatorio.'}}else if(active.type==='files'){
  let t=task(active.id);
  const files=Array.from($('attachments-input').files);
  for(const file of files){
@@ -893,7 +908,7 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
 $('modal-fields').addEventListener('click',async e=>{
  const recovery=e.target.closest('button[data-recover-upload]');
  if(recovery){
-  if(!canEditStep(5))return;
+  if(!canAddDocument())return;
   recovery.disabled=true;
   try{
    const {data,error}=await cloud.rpc('complete_activity_upload',{p_upload_id:recovery.dataset.recoverUpload});
@@ -910,7 +925,7 @@ $('modal-fields').addEventListener('click',async e=>{
   return;
  }
  const button=e.target.closest('button[data-remove-file]');
- if(!button||!canEditStep(5)||attachmentUploadBusy)return;
+ if(!button||!canDeleteDocument()||attachmentUploadBusy)return;
  const t=task(button.dataset.id),fileId=button.dataset.removeFile;
  if(!t||!confirm('¿Quitar este anexo de la actividad?'))return;
  button.disabled=true;
