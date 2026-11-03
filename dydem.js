@@ -56,7 +56,11 @@ function emptyPermissions(){return {steps:[false,false,false,false,false,false,f
 function accountPermissions(){const p=currentAccount?.permissions;return p&&Array.isArray(p.steps)&&p.steps.length===7?p:emptyPermissions()}
 function canAddDocument(){return isAdmin()||(isCustom()&&accountPermissions().doc_add===true)}
 function canDeleteDocument(){return isAdmin()||(isCustom()&&accountPermissions().doc_delete===true)}
-function canEditStep(i){return isAdmin()||(isCustom()&&(Number(i)===5?(canAddDocument()||canDeleteDocument()):accountPermissions().steps[Number(i)]===true))}
+function canEditStep(i){
+ const stage=Number(i);
+ return isAdmin()||(isCustom()&&(stage===5?(canAddDocument()||canDeleteDocument()):
+  stage===6&&accountPermissions().steps[6]===true));
+}
 function canEditAnyStep(){return names.some((_,i)=>canEditStep(i))}
 function canAddActivity(){return isAdmin()||(isCustom()&&accountPermissions().add===true)}
 function canDeleteActivity(){return isAdmin()||(isCustom()&&accountPermissions().delete===true)}
@@ -67,8 +71,13 @@ function permissionChooser(prefix,p){
  const documentado=`<fieldset class="permission-documentado"><legend>6. Evidencia</legend>
  <label class="permission-item"><input type="checkbox" data-custom-action="doc_add" ${perms.doc_add?'checked':''}><span><b>Añadir información</b><small>Subir y registrar archivos en Evidencia</small></span></label>
  <label class="permission-item"><input type="checkbox" data-custom-action="doc_delete" ${perms.doc_delete?'checked':''}><span><b>Eliminar información</b><small>Quitar archivos de Evidencia</small></span></label></fieldset>`;
- return '<div class="permission-choices">'+names.map((name,i)=>i===5?documentado:
-  `<label class="permission-item"><input type="checkbox" data-custom-step="${i}" ${perms.steps[i]?'checked':''}><span><b>${i+1}. ${esc(name)}</b>${i===0?'<small>Descripción, fechas y dependencias</small>':[1,2,4].includes(i)?'<small>Solo aprobar si está asignado; el Administrador elige responsables</small>':''}</span></label>`).join('')+
+ const stagePermissions=names.map((name,i)=>{
+  if(i===5)return documentado;
+  if(i===0||i===3)return `<div class="permission-item permission-info" role="note"><span><b>${i+1}. ${esc(name)}</b><small>Exclusivo del Administrador</small></span></div>`;
+  if([1,2,4].includes(i))return `<div class="permission-item permission-info" role="note"><span><b>${i+1}. ${esc(name)}</b><small>Confirmación únicamente por usuarios asignados como responsables. Asignaciones administradas por el Administrador.</small></span></div>`;
+  return `<label class="permission-item"><input type="checkbox" data-custom-step="${i}" ${perms.steps[i]?'checked':''}><span><b>${i+1}. ${esc(name)}</b></span></label>`;
+ }).join('');
+ return '<div class="permission-choices">'+stagePermissions+
  `<label class="permission-item"><input type="checkbox" data-custom-action="add" ${perms.add?'checked':''}><span><b>Agregar actividades</b></span></label>
  <label class="permission-item"><input type="checkbox" data-custom-action="delete" ${perms.delete?'checked':''}><span><b>Eliminar actividades</b></span></label>
  <label class="permission-item"><input type="checkbox" data-custom-action="comment" ${perms.comment?'checked':''}><span><b>Publicar notas</b><small>Sin este permiso puede leer las notas existentes</small></span></label></div>`;
@@ -76,14 +85,14 @@ function permissionChooser(prefix,p){
 function readPermissions(root){
  const docAdd=!!root.querySelector('[data-custom-action="doc_add"]')?.checked;
  const docDelete=!!root.querySelector('[data-custom-action="doc_delete"]')?.checked;
- return {steps:names.map((_,i)=>i===5?(docAdd||docDelete):!!root.querySelector('[data-custom-step="'+i+'"]')?.checked),
+ return {steps:names.map((_,i)=>i===5?(docAdd||docDelete):i===6?!!root.querySelector('[data-custom-step="6"]')?.checked:false),
   add:!!root.querySelector('[data-custom-action="add"]')?.checked,
   delete:!!root.querySelector('[data-custom-action="delete"]')?.checked,
   comment:!!root.querySelector('[data-custom-action="comment"]')?.checked,
   doc_add:docAdd,doc_delete:docDelete};
 }
 function roleLabel(role){return role==='admin'?'Administrador':role==='custom'?'Personalizado':'Visualizador'}
-function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps.map((v,i)=>i!==5&&v?names[i]:null).filter(Boolean);if(p.doc_add)a.push('Evidencia: Añadir');if(p.doc_delete)a.push('Evidencia: Eliminar');if(p.add)a.push('Agregar actividades');if(p.delete)a.push('Eliminar actividades');if(p.comment)a.push('Publicar notas');return a.length?a.join(', '):'Solo lectura y ver notas'}
+function permissionSummary(p){if(!p?.steps)return 'Sin etapas concedidas';const a=p.steps[6]?['Finalizado']:[];if(p.doc_add)a.push('Evidencia: Añadir');if(p.doc_delete)a.push('Evidencia: Eliminar');if(p.add)a.push('Agregar actividades');if(p.delete)a.push('Eliminar actividades');if(p.comment)a.push('Publicar notas');return a.length?a.join(', '):'Solo lectura y ver notas'}
 
 function syncState(message,error=false,busy=false){const el=$('sync-state');if(!el)return;el.textContent=message;el.classList.toggle('is-error',error);el.classList.toggle('is-busy',busy)}
 function messageError(err){return (err&&err.message)||String(err||'Error desconocido')}
@@ -330,7 +339,7 @@ async function loadResponsibleUsers(){
  availableResponsibles=Array.isArray(data)?data.map(p=>({id:String(p.id),display_name:String(p.display_name||'Usuario')})):[];
 }
 function canApproveStage(t,i){
- return isSignedIn()&&canEditStep(i)&&stagePeople(t,i).includes(currentAccount.id);
+ return isSignedIn()&&approvalStageKey(i)!==null&&stagePeople(t,i).includes(currentAccount?.id);
 }
 function approvalStageSummary(t,i,editable=false){
  const responsible=stagePeople(t,i),approved=new Set(approvedPeople(t,i));
@@ -669,7 +678,9 @@ function hybridReadOnlyStage(t,i){
   ${progress}
  </div>`;
 }
-function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{if(isCustom()&&!canEditStep(i))return hybridReadOnlyStage(t,i);const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
+function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{
+ if(approvalStageKey(i)!==null)return `<div class="viewer-step approval-stage-readonly"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}</div></div>`;
+ if(isCustom()&&!canEditStep(i))return hybridReadOnlyStage(t,i);const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
 if(i===3){const v=t.progress;detail=`<div class="row" style="margin-top:6px"><span class="muted">Avance de obra</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="progress" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
 if(i===5){
  const value=evidencePct(t);
@@ -704,13 +715,13 @@ async function editStep(t,i){
    const {data,error}=await cloud.rpc('list_dydem_stage_responsibles',{p_stage:Number(i)});
    if(error)throw error;
    eligible=Array.isArray(data)?data:[];
-  }catch(err){alert('No se pudo consultar los usuarios con permiso para esta etapa: '+messageError(err));return}
+  }catch(err){alert('No se pudo consultar los usuarios activos: '+messageError(err));return}
   const chosen=new Set(stagePeople(t,i));
   const options=eligible.map(u=>`<label class="approval-choice"><input type="checkbox" name="responsible" value="${esc(u.id)}" ${chosen.has(u.id)?'checked':''}><span>${esc(u.display_name)}</span></label>`).join('');
   const fields=`<fieldset class="responsible-chooser"><legend>Usuarios Responsables</legend>
-   ${options||'<p>No hay usuarios activos con permiso para esta etapa.</p>'}
+   ${options||'<p>No hay usuarios activos disponibles.</p>'}
    </fieldset><p class="muted">La etapa necesitará la aprobación individual de todos los seleccionados. Cambiar la asignación reiniciará las aprobaciones anteriores de esta etapa.</p>`;
-  modal(`${names[i]} · Actividad ${t.annex}`,'Solo se muestran usuarios activos con permiso para esta etapa. Cada responsable aprobará con su propia cuenta.',fields,{type:'assign',id:t.id,step:i});
+  modal(`${names[i]} · Actividad ${t.annex}`,'Puedes asignar a cualquier usuario activo de DYDEM. Solo los responsables asignados podrán aprobar usando su propia cuenta.',fields,{type:'assign',id:t.id,step:i});
   return;
  }
  if(i===5){
