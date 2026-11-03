@@ -6,7 +6,7 @@ function storeGet(key){try{return localStorage.getItem(key)}catch(e){return fall
 function storeSet(key,value){fallbackStorage.set(key,value);try{localStorage.setItem(key,value);return true}catch(e){return false}}
 function weekInfo(date=new Date()){const d=new Date(Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()));d.setUTCDate(d.getUTCDate()-(d.getUTCDay()||7)+1);const start=new Date(d),end=new Date(d);end.setUTCDate(end.getUTCDate()+6);const th=new Date(d);th.setUTCDate(th.getUTCDate()+3);const year=th.getUTCFullYear(),jan4=new Date(Date.UTC(year,0,4));jan4.setUTCDate(jan4.getUTCDate()-(jan4.getUTCDay()||7)+1);const week=1+Math.round((d-jan4)/604800000),iso=x=>x.toISOString().slice(0,10);return {year,week,start:iso(start),end:iso(end),code:`${year}-S${String(week).padStart(2,'0')}`}}
 function assignAnnexes(){const counts={};tasks.forEach(t=>{if(!t.weekCode){t.weekCode='2026-S43';t.weekNumber=43;t.weekStart='2026-10-19';t.weekEnd='2026-10-25'}const wk=t.weekNumber||43;if(!t.annex){counts[t.weekCode]=(counts[t.weekCode]||0)+1;t.annex=`${wk}_${counts[t.weekCode]}`}else counts[t.weekCode]=Math.max(counts[t.weekCode]||0,Number(t.annex.split('_')[1])||0)})}
-const fresh=t=>({...t,start:'',end:'',before:'',after:'',reviewers:'',reviewAnnex:'',authorizer:'',progress:0,verification:0,attachments:[],completedDate:'',workCompletedDate:'',responsibles:{review:[],authorization:[],verification:[]},approvals:{review:[],authorization:[],verification:[]},steps:[false,false,false,false,false,false,false]});
+const fresh=t=>({...t,start:'',end:'',before:'',after:'',reviewers:'',reviewAnnex:'',authorizer:'',progress:0,evidenceProgress:0,verification:0,attachments:[],completedDate:'',workCompletedDate:'',responsibles:{review:[],authorization:[],verification:[]},approvals:{review:[],authorization:[],verification:[]},steps:[false,false,false,false,false,false,false]});
 function migrate(t){
  const n=fresh({id:t.id,title:t.title});
  const keys=['review','authorization','verification'],responsibles={},approvals={};
@@ -17,6 +17,7 @@ function migrate(t){
  return {...n,...t,steps:Array.isArray(t.steps)?t.steps.slice(0,7):n.steps,
   attachments:Array.isArray(t.attachments)?t.attachments:[],
   progress:Math.max(0,Math.min(100,Number(t.progress)||0)),
+  evidenceProgress:Math.max(0,Math.min(100,Number(t.evidenceProgress)||0)),
   verification:0,workCompletedDate:t.workCompletedDate||'',responsibles,approvals};
 }
 let tasks=[];
@@ -60,7 +61,7 @@ function canEditAnyStep(){return names.some((_,i)=>canEditStep(i))}
 function canAddActivity(){return isAdmin()||(isCustom()&&accountPermissions().add===true)}
 function canDeleteActivity(){return isAdmin()||(isCustom()&&accountPermissions().delete===true)}
 function canPostComment(){return isAdmin()||(isCustom()&&accountPermissions().comment===true)}
-function stageForField(f){return (['title','start','end','before','after'].includes(f))?0:f==='progress'||f==='workCompletedDate'?3:f==='completedDate'?6:-1}
+function stageForField(f){return (['title','start','end','before','after'].includes(f))?0:f==='progress'||f==='workCompletedDate'?3:f==='evidenceProgress'?5:f==='completedDate'?6:-1}
 function permissionChooser(prefix,p){
  const perms=p&&Array.isArray(p.steps)?p:emptyPermissions();
  const documentado=`<fieldset class="permission-documentado"><legend>6. Evidencia</legend>
@@ -358,6 +359,7 @@ async function applyApprovalResponse(data){
  revisions.set(id,Number(data.revision));lastSynced.set(id,JSON.stringify(next));
  render();
 }
+function evidencePct(t){return Math.max(0,Math.min(100,Number(t.evidenceProgress)||0))}
 function status(t){return t.steps[6]?'Terminado':Number(t.progress)>0?'En proceso':'Por empezar'}
 function isBuilt(t){return !t.steps[6]&&t.steps[3]===true}
 function selectOptions(self,selected){return '<option value="">Ninguna</option>'+tasks.filter(t=>t.id!==self).map(t=>`<option value="${t.id}" ${String(selected)===String(t.id)?'selected':''}>#${t.id} — ${esc(t.title.slice(0,65))}</option>`).join('')}
@@ -575,7 +577,7 @@ function viewerCard(t){
  const stageOpen=sectionIsOpen(t.id,'stages')?' open':'';
  const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
 
- const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span>${viewerAttachmentLinks(t)}<small>${t.steps[5]?'Requisito cumplido':'Requisito pendiente'}</small></span></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
+ const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span><strong>Progreso de Evidencia: ${evidencePct(t)}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}</span></div><div class="viewer-progress"><div style="width:${evidencePct(t)}%"></div></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
  return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}</div></article>`;
 }
 function isMobileTimeline(){return typeof window!=='undefined' && window.matchMedia('(max-width: 760px)').matches}
@@ -655,7 +657,9 @@ function hybridReadOnlyStage(t,i){
   content=`<strong>${value}%</strong>${i===3?`<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small>`:''}`;
   progress=`<div class="viewer-progress hybrid-progress"><div style="width:${value}%"></div></div>`;
  }else if(i===5){
-  content=`${viewerAttachmentLinks(t)}<small>Evidencia: ${t.steps[5]?'Requisito cumplido':'Pendiente para finalizar'}</small>`;
+  const value=evidencePct(t);
+  content=`<strong>Progreso de Evidencia: ${value}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}`;
+  progress=`<div class="viewer-progress hybrid-progress"><div style="width:${value}%"></div></div>`;
  }else if(i===6){
   content=t.steps[6]?esc(t.completedDate||'Sí'):'No';
  }
@@ -667,7 +671,14 @@ function hybridReadOnlyStage(t,i){
 }
 function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{if(isCustom()&&!canEditStep(i))return hybridReadOnlyStage(t,i);const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
 if(i===3){const v=t.progress;detail=`<div class="row" style="margin-top:6px"><span class="muted">Avance de obra</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="progress" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
-if(i===5)detail=`<div class="detail">${viewerAttachmentLinks(t)}</div>`;
+if(i===5){
+ const value=evidencePct(t);
+ const percentControl=isAdmin()?`<input class="pct" type="number" min="0" max="100" step="1" aria-label="Progreso de Evidencia" data-id="${t.id}" data-field="evidenceProgress" value="${value}">`:`<strong class="evidence-progress-percent">${value}%</strong>`;
+ detail=`<div class="row evidence-progress-line" style="margin-top:6px"><span class="muted">Progreso de Evidencia</span>${percentControl}${isAdmin()?'%':''}</div>
+ <div class="progress evidence-progress-track"><div style="width:${value}%"></div></div>
+ <small class="muted evidence-progress-independent">Porcentaje independiente de los archivos de Evidencia.</small>
+ <div class="detail evidence-file-list">${viewerAttachmentLinks(t)}</div>`;
+}
 if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que terminó la obra</label><input type="date" data-id="${t.id}" data-field="workCompletedDate" ${canEdit?'':'disabled'} value="${esc(t.workCompletedDate||'')}"></div>`;
 if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true);
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
@@ -974,7 +985,10 @@ $('board').addEventListener('change',e=>{
   const field=el.dataset.field,stage=stageForField(field);
   if(!canEditStep(stage))return;
   const value=el.value;
-  if(field==='progress'){
+  if(field==='evidenceProgress'){
+   if(!isAdmin())return;
+   t.evidenceProgress=Math.max(0,Math.min(100,Number(value)||0));
+  }else if(field==='progress'){
    const p=Math.max(0,Math.min(100,Number(value)||0));
    t.progress=p;
    if(p<100)uncheck(t,3);else autoCheck(t,3);
@@ -1140,7 +1154,7 @@ function pdf(){
   ${tr('Autorización · Usuarios Responsables',approvalText(t,2))}
   ${tr('Avance de Obra',t.progress+' %')}${tr('Fecha real de término de obra',t.workCompletedDate||'Sin fecha')}
   ${tr('Verificación · Usuarios Responsables',approvalText(t,4))}
-  ${tr('Evidencia obligatoria',t.attachments.length?t.attachments.map(a=>a.name).join(', '):'Pendiente')}
+  ${tr('Progreso de Evidencia',evidencePct(t)+' %')}${tr('Evidencia obligatoria',t.attachments.length?t.attachments.map(a=>a.name).join(', '):'Pendiente')}
   ${tr('Finalizado',t.steps[6]?'Sí':'Pendiente')}
   ${t.completedDate?tr('Fecha de finalización',t.completedDate):''}</table></section>`;
  }).join('');
