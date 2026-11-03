@@ -67,7 +67,7 @@ function permissionChooser(prefix,p){
  <label class="permission-item"><input type="checkbox" data-custom-action="doc_add" ${perms.doc_add?'checked':''}><span><b>Añadir información</b><small>Subir y registrar archivos en Evidencia</small></span></label>
  <label class="permission-item"><input type="checkbox" data-custom-action="doc_delete" ${perms.doc_delete?'checked':''}><span><b>Eliminar información</b><small>Quitar archivos de Evidencia</small></span></label></fieldset>`;
  return '<div class="permission-choices">'+names.map((name,i)=>i===5?documentado:
-  `<label class="permission-item"><input type="checkbox" data-custom-step="${i}" ${perms.steps[i]?'checked':''}><span><b>${i+1}. ${esc(name)}</b>${i===0?'<small>Descripción, fechas y dependencias</small>':''}</span></label>`).join('')+
+  `<label class="permission-item"><input type="checkbox" data-custom-step="${i}" ${perms.steps[i]?'checked':''}><span><b>${i+1}. ${esc(name)}</b>${i===0?'<small>Descripción, fechas y dependencias</small>':[1,2,4].includes(i)?'<small>Solo aprobar si está asignado; el Administrador elige responsables</small>':''}</span></label>`).join('')+
  `<label class="permission-item"><input type="checkbox" data-custom-action="add" ${perms.add?'checked':''}><span><b>Agregar actividades</b></span></label>
  <label class="permission-item"><input type="checkbox" data-custom-action="delete" ${perms.delete?'checked':''}><span><b>Eliminar actividades</b></span></label>
  <label class="permission-item"><input type="checkbox" data-custom-action="comment" ${perms.comment?'checked':''}><span><b>Publicar notas</b><small>Sin este permiso puede leer las notas existentes</small></span></label></div>`;
