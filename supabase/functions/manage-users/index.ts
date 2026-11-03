@@ -14,6 +14,11 @@ function validPermissions(v:unknown):v is PermissionSet{
  const p=v as Record<string,unknown>;
  return Array.isArray(p.steps)&&p.steps.length===7&&p.steps.every(x=>typeof x==="boolean")&&typeof p.add==="boolean"&&typeof p.delete==="boolean"&&typeof p.comment==="boolean"&&typeof p.doc_add==="boolean"&&typeof p.doc_delete==="boolean";
 }
+// Los permisos de las etapas 1-5 se derivan del rol o de la asignación
+// individual de responsables, nunca de una casilla general por usuario.
+function restrictedPermissions(p:PermissionSet):PermissionSet{
+ return {...p,steps:p.steps.map((enabled,i)=>i<5?false:i===5?(p.doc_add||p.doc_delete):enabled)};
+}
 function targetRole(value:unknown){return value==="admin"?"admin":value==="custom"?"custom":"viewer"}
 
 serve(async (req:Request)=>{
@@ -39,7 +44,7 @@ serve(async (req:Request)=>{
    const display=String(input.name||"").trim();
    const role=targetRole(input.role);
    if(role==="custom"&&!validPermissions(input.permissions))return respond(400,{error:"Selecciona los permisos del usuario personalizado."});
-   const permissions=role==="custom" ? input.permissions as PermissionSet : emptyPermissions();
+   const permissions=role==="custom" ? restrictedPermissions(input.permissions as PermissionSet) : emptyPermissions();
    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254||!display||display.length>120)return respond(400,{error:"Correo o nombre inválido"});
    const {count,error:countError}=await admin.from("profiles").select("id",{head:true,count:"exact"}).eq("active",true);
    if(countError)return respond(500,{error:"No se pudieron consultar usuarios"});
@@ -89,7 +94,7 @@ serve(async (req:Request)=>{
      if(countError)return respond(500,{error:"No se pudo validar el número de administradores"});
      if((count||0)<=1)return respond(409,{error:"Debe quedar al menos un administrador activo"});
    }
-   const permissions=role==="custom"?input.permissions as PermissionSet:emptyPermissions();
+   const permissions=role==="custom"?restrictedPermissions(input.permissions as PermissionSet):emptyPermissions();
    const {error:updateError}=await admin.from("profiles").update({role,permissions}).eq("id",id);
    if(updateError)return respond(500,{error:"No se pudieron guardar los permisos: "+updateError.message});
    return respond(200,{ok:true});
