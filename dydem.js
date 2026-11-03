@@ -118,14 +118,16 @@ async function reloadComments(){
  }
  commentsByActivity=next;
 }
-async function reloadActivities(force=false){if(!isSignedIn())return;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}syncState('Actualizando…',false,true);try{await reconcileAttachmentIntents()}catch(err){console.warn('Pendientes de Documentado:',messageError(err))}const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',PROJECT_ID).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}await reloadComments();tasks=(data||[]).map(r=>migrate({...r.data,id:Number(r.id)}));if(!collapsePreferencesInitialized){const saved=storeGet(COLLAPSE_KEY);if(saved===null){tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed()}collapsePreferencesInitialized=true}lastSynced=new Map(tasks.map(t=>[Number(t.id),JSON.stringify(t)]));revisions=new Map(data.map(r=>[Number(r.id),r.revision]));render();syncState('Actualizado');refreshQueued=false}
+async function reloadActivities(force=false){if(!isSignedIn())return;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}syncState('Actualizando…',false,true);try{await reconcileAttachmentIntents()}catch(err){console.warn('Pendientes de Documentado:',messageError(err))}const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',PROJECT_ID).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}await reloadComments();
+ try{await loadResponsibleUsers()}catch(err){console.warn('Directorio de responsables no disponible:',messageError(err))}
+ tasks=(data||[]).map(r=>migrate({...r.data,id:Number(r.id)}));if(!collapsePreferencesInitialized){const saved=storeGet(COLLAPSE_KEY);if(saved===null){tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed()}collapsePreferencesInitialized=true}lastSynced=new Map(tasks.map(t=>[Number(t.id),JSON.stringify(t)]));revisions=new Map(data.map(r=>[Number(r.id),r.revision]));render();syncState('Actualizado');refreshQueued=false}
 function scheduleCloudRefresh(){if(refreshDelay)clearTimeout(refreshDelay);refreshDelay=setTimeout(()=>{refreshDelay=null;reloadActivities().catch(e=>syncState('No se pudo sincronizar',true))},450)}
 function startRealtime(){if(subscription){cloud.removeChannel(subscription);subscription=null}subscription=cloud.channel('dydem-obra-shared').on('postgres_changes',{event:'*',schema:'public',table:'activities',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'INSERT',schema:'public',table:'activity_comments',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'DELETE',schema:'public',table:'activity_comments'},()=>scheduleCloudRefresh()).subscribe();if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(isSignedIn())reloadActivities().catch(()=>syncState('Error de actualización',true))},15000)}
 async function save(){if(!canEditAnyStep())return;savePending=true;if(saveBusy)return;saveBusy=true;syncState('Guardando…',false,true);
  try{while(savePending){savePending=false;const changed=tasks.filter(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)));
-  for(const t of changed){const id=Number(t.id),expected=revisions.get(id);if(expected===undefined)throw Error('Actividad sin versión de servidor: '+id);const sent=JSON.stringify(t);const {data,error}=await cloud.rpc(isAdmin()?'update_activity':'update_activity_custom',{p_id:id,p_expected_revision:expected,p_data:JSON.parse(sent)});if(error)throw error;revisions.set(id,data.revision);lastSynced.set(id,JSON.stringify(migrate(data.data)));}
+  for(const t of changed){const id=Number(t.id),expected=revisions.get(id);if(expected===undefined)throw Error('Actividad sin versión de servidor: '+id);const sent=JSON.stringify(t);const {data,error}=await cloud.rpc(isAdmin()?'update_activity':'update_activity_custom',{p_id:id,p_expected_revision:expected,p_data:JSON.parse(sent)});if(error)throw error;const saved=migrate({...data.data,id});Object.assign(t,saved);revisions.set(id,data.revision);lastSynced.set(id,JSON.stringify(saved));}
  }}catch(e){savePending=false;const msg=messageError(e);syncState('Cambios pendientes: error',true);alert('No se pudo confirmar el guardado en el servidor. Los cambios siguen visibles en esta pestaña y puedes reintentar con «Guardar cambios». No cierres la página sin guardarlos. Detalle: '+msg);return}finally{saveBusy=false}
- syncState('Guardado');if(refreshQueued)reloadActivities().catch(()=>syncState('Sincronización pendiente',true));
+ syncState('Guardado');render();if(refreshQueued)reloadActivities().catch(()=>syncState('Sincronización pendiente',true));
 }
 $('access-form').addEventListener('submit',async e=>{e.preventDefault();if(!cloud)return;const btn=$('access-submit');btn.disabled=true;$('access-error').textContent='';try{const {error}=await cloud.auth.signInWithPassword({email:$('access-user').value.trim(),password:$('access-pass').value});if(error)throw error;await loadAccount()}catch(err){$('access-error').textContent='No se pudo iniciar sesión: '+messageError(err)}finally{btn.disabled=false;$('access-pass').value=''}});
 $('signout').onclick=()=>{if((isDirty()||saveBusy)&&!confirm('Hay cambios que aún no se han guardado. ¿Cerrar sesión y descartarlos?'))return;leaveAccount().catch(e=>alert(messageError(e)))};
@@ -673,21 +675,53 @@ if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que 
 if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true);
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
 return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}</div></article>`}
-let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='edit'&&canEditStep(action.step))&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
+let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='assign'&&canEditStep(action.step))&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
 function close(){if(attachmentUploadBusy){alert('La carga de archivos sigue en curso. Espera a que termine.');return}active=null;$('modal').hidden=true;render()}
 $('modal-cancel').onclick=close;
 function requiredDates(t){return !!t.start&&!!t.end&&t.end>=t.start}
-function missing(){return tasks.filter(t=>!requiredDates(t)||t.steps[1]&&!t.reviewers.trim()||t.steps[2]&&!t.authorizer.trim()||t.steps[6]&&!t.completedDate)}
-function startup(){const incomplete=missing();if(!incomplete.length)return;const fields=incomplete.map(t=>`<fieldset style="border:1px solid #dce3ed;border-radius:8px"><legend>#${t.id} — ${esc(t.title.slice(0,75))}</legend><div class="row">${!requiredDates(t)?`<div class="field"><label>Inicio tentativo *</label><input type="date" name="start-${t.id}" value="${esc(t.start)}" required></div><div class="field"><label>Final tentativo *</label><input type="date" name="end-${t.id}" value="${esc(t.end)}" required></div>`:''}${t.steps[1]&&!t.reviewers.trim()?`<div class="field"><label>Personas que revisaron *</label><input name="reviewers-${t.id}" required></div>`:''}${t.steps[2]&&!t.authorizer.trim()?`<div class="field"><label>Persona que autorizó *</label><input name="authorizer-${t.id}" required></div>`:''}${t.steps[6]&&!t.completedDate?`<div class="field"><label>Fecha de compleción *</label><input type="date" name="completedDate-${t.id}" required></div>`:''}</div></fieldset>`).join('');modal('Completar datos obligatorios',`Hay ${incomplete.length} actividad(es) con datos obligatorios pendientes. Puedes cerrar y completarlos después; no se marcarán las etapas correspondientes hasta cumplir sus requisitos.`,fields,{type:'startup',ids:incomplete.map(t=>t.id)})}
-function editStep(t,i){if(!canEditStep(i))return;if(i===1)modal(`Revisión · Actividad ${t.id}`,'Indica las personas que realizaron la revisión. El código de anexo es opcional.',`<div class="field"><label>Nombre(s) de revisores *</label><textarea name="reviewers" required>${esc(t.reviewers)}</textarea></div><div class="field"><label>Código de anexo (opcional)</label><input name="reviewAnnex" value="${esc(t.reviewAnnex)}"></div>`,{type:'edit',id:t.id,step:i});if(i===2)modal(`Autorización · Actividad ${t.id}`,'Indica quién autorizó la actividad.',`<div class="field"><label>Nombre de quien autorizó *</label><input name="authorizer" value="${esc(t.authorizer)}" required></div>`,{type:'edit',id:t.id,step:i});if(i===5)modal(`Documentación · Actividad ${t.id}`,canAddDocument()?'Añade archivos a la actividad. Quienes tienen permiso para eliminar también podrán quitarlos.':'Puedes quitar archivos existentes; no tienes permiso para subir archivos.',`${canAddDocument()?`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple><p class="attachment-upload-help">Máximo de DYDEM: 500 MB por archivo. El almacenamiento actual de Supabase admite hasta 50 MB por archivo. DYDEM registra cada carga antes de enviarla y verifica su aparición en la actividad al finalizar. No cierres la ventana hasta recibir la confirmación.</p><span id="attachment-upload-status" role="status"></span></div>`:''}<div id="attachment-list">${attachmentList(t)}</div>`,{type:'files',id:t.id,step:i})}
+function missing(){return tasks.filter(t=>!requiredDates(t)||t.steps[6]&&!t.completedDate)}
+function startup(){
+ const incomplete=missing();if(!incomplete.length)return;
+ const fields=incomplete.map(t=>`<fieldset style="border:1px solid #dce3ed;border-radius:8px"><legend>#${t.id} — ${esc(t.title.slice(0,75))}</legend><div class="row">
+ ${!requiredDates(t)?`<div class="field"><label>Inicio tentativo *</label><input type="date" name="start-${t.id}" value="${esc(t.start)}" required></div><div class="field"><label>Final tentativo *</label><input type="date" name="end-${t.id}" value="${esc(t.end)}" required></div>`:''}
+ ${t.steps[6]&&!t.completedDate?`<div class="field"><label>Fecha de finalización *</label><input type="date" name="completedDate-${t.id}" required></div>`:''}
+ </div></fieldset>`).join('');
+ modal('Completar datos obligatorios',`Hay ${incomplete.length} actividad(es) con fechas pendientes. Puedes cerrarlas y completarlas después.`,fields,{type:'startup',ids:incomplete.map(t=>t.id)});
+}
+async function editStep(t,i){
+ if(!canEditStep(i))return;
+ if(approvalStageKey(i)!==null){
+  try{await loadResponsibleUsers()}catch(err){alert('No se pudo cargar el directorio de usuarios: '+messageError(err));return}
+  const chosen=new Set(stagePeople(t,i));
+  const options=availableResponsibles.map(u=>`<label class="approval-choice"><input type="checkbox" name="responsible" value="${esc(u.id)}" ${chosen.has(u.id)?'checked':''}><span>${esc(u.display_name)}</span></label>`).join('');
+  const fields=`<fieldset class="responsible-chooser"><legend>Usuarios Responsables</legend>
+   ${options||'<p>No hay usuarios activos disponibles.</p>'}
+   </fieldset><p class="muted">La etapa necesitará la aprobación individual de todos los seleccionados. Cambiar la asignación reiniciará las aprobaciones anteriores de esta etapa.</p>`;
+  modal(`${names[i]} · Actividad ${t.annex}`,'Selecciona uno o varios usuarios de DYDEM. Cada responsable aprobará con su propia cuenta.',fields,{type:'assign',id:t.id,step:i});
+  return;
+ }
+ if(i===5){
+  modal(`Evidencia · Actividad ${t.annex}`,canAddDocument()?'Añade archivos para acreditar la actividad. La Evidencia es obligatoria para finalizar.':'Puedes quitar archivos existentes; no tienes permiso para subir archivos.',
+  `${canAddDocument()?`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple><p class="attachment-upload-help">Máximo de DYDEM: 500 MB por archivo. El almacenamiento actual de Supabase admite hasta 50 MB por archivo. DYDEM registra cada carga antes de enviarla y verifica su aparición en la actividad al finalizar. No cierres la ventana hasta recibir la confirmación.</p><span id="attachment-upload-status" role="status"></span></div>`:''}<div id="attachment-list">${attachmentList(t)}</div>`,
+  {type:'files',id:t.id,step:i});
+ }
+}
 function attachmentList(t){
  const files=t.attachments.map(a=>`<div class="attachment">${attachmentActions(t,a)}${canDeleteDocument()?`<button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button>`:''}</div>`).join('');
  const pending=pendingForActivity(t.id).map(a=>`<div class="attachment pending-attachment"><span class="pending-attachment-info">⏳ <b>${esc(a.file_name)}</b><small> Pendiente: ${a.last_error?'No se pudo confirmar.':'Se recuperará automáticamente cuando esté completo.'} ${esc(a.last_error||'')}</small></span>${canAddDocument()?`<button type="button" class="btn secondary" data-recover-upload="${esc(a.id)}" data-id="${t.id}">Comprobar</button>`:''}</div>`).join('');
  return (files+pending)||'<span class="muted">No hay archivos adjuntos.</span>';
 }
-function canCheck(t,i){if(i>0&&!t.steps[i-1]&&!(i===6&&t.steps[4]))return 'Completa primero la etapa anterior.';if(i===0&&!requiredDates(t))return 'Completa las fechas tentativas de inicio y final.';if(i===1&&!t.reviewers.trim())return 'Introduce al menos un nombre de revisor.';if(i===2&&!t.authorizer.trim())return 'Introduce el nombre de quien autorizó.';if(i===3&&t.progress!==100)return 'El avance de obra debe llegar al 100 %.';if(i===4&&t.verification!==100)return 'La verificación debe llegar al 100 %.';if(i===6&&!t.completedDate)return 'Indica la fecha de compleción.';if(i===6&&t.before&&task(t.before)&&!task(t.before).steps[6])return 'La actividad anterior enlazada debe estar completada.';return ''}
+function canCheck(t,i){
+ if([1,2,4,5].includes(i))return 'Esta etapa se valida automáticamente mediante aprobaciones o Evidencia.';
+ if(i===0&&!requiredDates(t))return 'Completa las fechas tentativas de inicio y final.';
+ if(i===3&&t.progress!==100)return 'El avance de obra debe llegar al 100 %.';
+ if(i===6&&![0,1,2,3,4,5].every(n=>t.steps[n]))return 'Para Finalizado deben completarse Revisión, Autorización, Avance de Obra, Verificación y Evidencia.';
+ if(i===6&&!t.completedDate)return 'Indica la fecha de finalización.';
+ if(i===6&&t.before&&task(t.before)&&!task(t.before).steps[6])return 'La actividad anterior enlazada debe estar finalizada.';
+ return '';
+}
 function autoCheck(t,i){if(!canCheck(t,i))t.steps[i]=true}
-function uncheck(t,i){if(isCustom()){t.steps[i]=false;return}if(i===5){t.steps[5]=false;return}for(let j=i;j<7;j++)t.steps[j]=false}
+function uncheck(t,i){t.steps[i]=false}
 function linkError(t,field,value){if(!value)return '';if(String(value)===String(t.id))return 'No se puede enlazar una actividad consigo misma.';if(field==='before'&&String(t.after)===String(value)||field==='after'&&String(t.before)===String(value))return 'Las dos dependencias no pueden apuntar a la misma actividad.';let next=task(value),seen=new Set([t.id]);while(next){if(seen.has(next.id))return 'Esta relación crearía un ciclo de dependencias.';seen.add(next.id);next=task(field==='before'?next.before:next.after)}return ''}
 // Storage privado de Supabase. metadata.path pertenece al bucket; nunca al navegador.
 async function putFile(t,file,intent){
@@ -907,31 +941,71 @@ $('board').addEventListener('submit',async event=>{
  }catch(error){feedback.textContent='No se pudo publicar la nota: '+messageError(error)}
  finally{button.disabled=false}
 });
+$('board').addEventListener('change',async event=>{
+ const checkbox=event.target.closest('input[data-vote-stage]');
+ if(!checkbox)return;
+ const t=task(checkbox.dataset.id),stage=Number(checkbox.dataset.voteStage);
+ if(!t||!canApproveStage(t,stage))return;
+ checkbox.disabled=true;
+ try{
+  if(isDirty()){
+   await save();
+   if(isDirty())throw Error('Guarda los cambios pendientes antes de aprobar.');
+  }
+  const {data,error}=await cloud.rpc('vote_activity_stage',{
+   p_id:Number(t.id),p_stage:stage,p_approved:checkbox.checked
+  });
+  if(error)throw error;
+  await applyApprovalResponse(data);
+  syncState('Aprobación registrada');
+ }catch(err){checkbox.checked=!checkbox.checked;alert('No se pudo registrar tu aprobación: '+messageError(err));checkbox.disabled=false}
+});
 $('board').addEventListener('change',e=>{
  const el=e.target,t=task(el.dataset.id);
  if(!t||!isSignedIn())return;
  if(el.dataset.step!==undefined){
   const i=Number(el.dataset.step);
-  if(!canEditStep(i))return;
-  if(!el.checked){uncheck(t,i)}
-  else{const error=canCheck(t,i);if(error){alert(error);if([1,2,5].includes(i))editStep(t,i);else if(i===0&&isAdmin())startup()}else t.steps[i]=true}
+  if([1,2,4,5].includes(i)||!canEditStep(i))return;
+  if(!el.checked)uncheck(t,i);
+  else{const err=canCheck(t,i);if(err){alert(err);render();return}t.steps[i]=true}
  }else if(el.dataset.field){
-  const f=el.dataset.field,i=stageForField(f);if(!canEditStep(i))return;
-  let v=el.value;
-  if(f==='progress'||f==='verification'){
-   v=Math.max(0,Math.min(100,Number(v)||0));t[f]=v;
-   if(v<100)uncheck(t,i);else autoCheck(t,i);
-  }else if(f==='before'||f==='after'){
-   const error=linkError(t,f,v);if(error){alert(error);render();return}t[f]=v;
+  const field=el.dataset.field,stage=stageForField(field);
+  if(!canEditStep(stage))return;
+  const value=el.value;
+  if(field==='progress'){
+   const p=Math.max(0,Math.min(100,Number(value)||0));
+   t.progress=p;
+   if(p<100)uncheck(t,3);else autoCheck(t,3);
+  }else if(field==='before'||field==='after'){
+   const err=linkError(t,field,value);if(err){alert(err);render();return}
+   t[field]=value;
   }else{
-   t[f]=v;
-   if(f==='start'||f==='end'){if(!requiredDates(t))uncheck(t,0);else autoCheck(t,0)}
-   if(f==='completedDate'){if(!v)uncheck(t,6);else autoCheck(t,6)}
+   t[field]=value;
+   if(field==='start'||field==='end'){
+    if(!requiredDates(t))uncheck(t,0);else autoCheck(t,0);
+   }
+   if(field==='completedDate'){
+    if(!value)uncheck(t,6);else autoCheck(t,6);
+   }
   }
  }else return;
  save();render();
 });
-$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='edit'&&canEditStep(active.step)||active.type==='files'&&canAddDocument()))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=active.type==='files';let form=new FormData(e.target);let err='';try{if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','reviewers','authorizer','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(active.type==='edit'){let t=task(active.id);if(active.step===1){t.reviewers=String(form.get('reviewers')||'').trim();t.reviewAnnex=String(form.get('reviewAnnex')||'').trim();if(t.reviewers)autoCheck(t,1);if(!t.reviewers)err='Se requiere al menos un nombre de revisor.'}if(active.step===2){t.authorizer=String(form.get('authorizer')||'').trim();if(t.authorizer)autoCheck(t,2);if(!t.authorizer)err='El nombre de quien autorizó es obligatorio.'}}else if(active.type==='files'){
+$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='assign'&&canEditStep(active.step)||active.type==='files'&&canAddDocument()))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=active.type==='files';let form=new FormData(e.target);let err='';try{
+ if(active.type==='assign'){
+  const selected=[...$('modal-fields').querySelectorAll('input[name="responsible"]:checked')].map(n=>n.value);
+  if(isDirty()){
+   await save();if(isDirty())throw Error('Primero guarda los cambios pendientes de actividades.');
+  }
+  const {data,error}=await cloud.rpc('set_activity_responsibles',{
+   p_id:Number(active.id),p_stage:Number(active.step),p_users:selected
+  });
+  if(error)throw error;
+  await applyApprovalResponse(data);
+  close();
+  return;
+ }
+ if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(active.type==='files'){
  let t=task(active.id);
  const files=Array.from($('attachments-input').files);
  for(const file of files){
