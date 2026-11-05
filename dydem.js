@@ -628,7 +628,7 @@ function timelineHTML(print=false,compact=false,mobile=isMobileTimeline()&&!prin
   const extended=real!==null&&projected&&real>end;
   const span=Math.max(1,cardEnd-cardStart+1);
   const label=print?`<span class="tl-annex">${esc(t.annex)}</span><span class="tl-title-text">${esc(title)}</span>`:`<button class="tl-card-link" data-jump="${t.id}" title="Ir a la actividad: ${esc(t.title)}"><span class="tl-annex">${esc(t.annex)}</span><span class="tl-title-text">${esc(title)}</span></button>`;
-  const card=`<div class="tl-project-card ${status(t)==='Por empezar'?'tl-pending':status(t)==='Terminado'?'tl-finished':isBuilt(t)?'tl-built':'tl-active'}" style="left:${pos(cardStart)}%;width:${width(span)}%" title="Proyectado: ${esc(t.start||'Sin fecha')} a ${esc(t.end||'Sin fecha')} · Avance: ${progress}%"><div class="tl-card-top"><div class="tl-card-title">${statusDot(t)}${label}</div></div>${print?`<div class="tl-card-percent">Obra a: ${progress}%</div>`:''}<div class="tl-card-progress"><div style="width:${progress}%"></div></div></div>`;
+  const card=`<div ${print?'':`data-jump="${t.id}"`} class="tl-project-card ${status(t)==='Por empezar'?'tl-pending':status(t)==='Terminado'?'tl-finished':isBuilt(t)?'tl-built':'tl-active'}" style="left:${pos(cardStart)}%;width:${width(span)}%" title="Proyectado: ${esc(t.start||'Sin fecha')} a ${esc(t.end||'Sin fecha')} · Avance: ${progress}%"><div class="tl-card-top"><div class="tl-card-title">${statusDot(t)}${label}</div></div>${print?`<div class="tl-card-percent">Obra a: ${progress}%</div>`:''}<div class="tl-card-progress"><div style="width:${progress}%"></div></div></div>`;
   const red=extended?`<div class="tl-delay" style="left:${pos(end+1)}%;width:${width(real-end)}%" title="Fin proyectado: ${t.end} · Fin de obra real: ${t.workCompletedDate}"><span>Finalizó en</span><span class="tl-delay-arrow">➜</span></div>`:'';
   const actual=real!==null?`<span class="tl-actual-marker" style="left:${pos(real+.5)}%" title="Fin real de obra: ${t.workCompletedDate}">◆</span>`:'';
   const cells=Array.from({length:d.total},(_,i)=>`<div class="tl-background-cell ${i%7===0?'week-start':''} ${Math.floor(i/7)%2===0?'week-blue':'week-white'} ${mobile&&d.lo+i===todayDay?'is-today':''}"></div>`).join('');
@@ -966,7 +966,16 @@ $('board').addEventListener('click',async e=>{
  const b=e.target.closest('button');if(!b)return;
  const t=task(b.dataset.id||b.dataset.delete||b.dataset.rename||b.dataset.collapse);
  if(!t)return;
- if(b.dataset.collapse){const id=String(t.id);if(collapsedActivities.has(id))collapsedActivities.delete(id);else{collapsedActivities.add(id);openStageByActivity.delete(id)}persistCollapsed();render();return}
+ if(b.dataset.collapse){
+  const id=String(t.id);
+  if(collapsedActivities.has(id))collapsedActivities.delete(id);
+  else{
+   collapsedActivities.add(id);
+   $('activity-'+id)?.querySelectorAll('details[data-stage-index]').forEach(panel=>{panel.open=false});
+   openStageByActivity.delete(id);
+  }
+  persistCollapsed();render();return
+ }
  if(b.dataset.delete){if(!canDeleteActivity())return;if(!confirm(`¿Eliminar actividad ${t.id}?`))return;syncState('Eliminando…',false,true);const {error}=await cloud.rpc('delete_activity',{p_id:t.id,p_expected_revision:revisions.get(Number(t.id))});if(error){alert('No se pudo eliminar: '+messageError(error));await reloadActivities(true);return}collapsedActivities.delete(String(t.id));persistCollapsed();await reloadActivities(true);return}
  if(b.dataset.rename){if(!canEditStep(0))return;let title=prompt('Descripción de la actividad:',t.title);if(title?.trim()){t.title=title.trim();save();render()}return}
  if(b.dataset.edit!==undefined){const i=Number(b.dataset.edit);if((approvalStageKey(i)!==null?isAdmin():canEditStep(i)))editStep(t,i)}
