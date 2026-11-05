@@ -26,6 +26,22 @@ const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g
 // Autenticación y datos centralizados: nunca se almacenan contraseñas en DYDEM.
 let currentAccount=null,cloud=null,authReady=false,subscription=null,refreshTimer=null;
 let commentsByActivity=new Map(),commentDrafts=new Map(),sectionOpen=new Map();
+// Expanded stage panels are UI state, not server data: preserve them across
+// periodic Supabase refreshes and while other users edit the activity.
+const openStageByActivity=new Map();
+function rememberOpenStages(){
+ const visible=new Map();
+ document.querySelectorAll('#board .step details[data-stage-index][data-stage-activity]').forEach(panel=>{
+  const id=panel.dataset.stageActivity;
+  if(!visible.has(id))visible.set(id,null);
+  if(panel.open)visible.set(id,Number(panel.dataset.stageIndex));
+ });
+ for(const [id,stage] of visible){
+  if(stage===null)openStageByActivity.delete(id);
+  else openStageByActivity.set(id,stage);
+ }
+}
+
 let availableResponsibles=[];
 let lastSynced=new Map(),revisions=new Map(),saveBusy=false,savePending=false,refreshQueued=false,refreshDelay=null;
 // El enlace puede abrirse en otra pestaña; esta preferencia no autoriza ninguna sesión.
@@ -587,7 +603,7 @@ function viewerCard(t){
  const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
 
  const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span><strong>Progreso de Evidencia: ${evidencePct(t)}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}</span></div><div class="viewer-progress"><div style="width:${evidencePct(t)}%"></div></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
- return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}</div></article>`;
+ return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}</div></article>`;
 }
 function isMobileTimeline(){return typeof window!=='undefined' && window.matchMedia('(max-width: 760px)').matches}
 function timelineHTML(print=false,compact=false,mobile=isMobileTimeline()&&!print){
@@ -616,12 +632,63 @@ function timelineHTML(print=false,compact=false,mobile=isMobileTimeline()&&!prin
   const red=extended?`<div class="tl-delay" style="left:${pos(end+1)}%;width:${width(real-end)}%" title="Fin proyectado: ${t.end} · Fin de obra real: ${t.workCompletedDate}"><span>Finalizó en</span><span class="tl-delay-arrow">➜</span></div>`:'';
   const actual=real!==null?`<span class="tl-actual-marker" style="left:${pos(real+.5)}%" title="Fin real de obra: ${t.workCompletedDate}">◆</span>`:'';
   const cells=Array.from({length:d.total},(_,i)=>`<div class="tl-background-cell ${i%7===0?'week-start':''} ${Math.floor(i/7)%2===0?'week-blue':'week-white'} ${mobile&&d.lo+i===todayDay?'is-today':''}"></div>`).join('');
-  return `<div class="tl-row-ref"><div class="tl-row-cells">${cells}</div>${card}${red}${actual}</div>`;
+  return `<div class="tl-row-ref" data-timeline-activity="${t.id}"><div class="tl-row-cells">${cells}</div>${card}${red}${actual}</div>`;
  }).join('');
  return `<div class="tl-reference-grid ${compact?'tl-compact':''} ${mobile?'tl-mobile-view':''}" style="--day-count:${d.total}">${head}${rows}${todayVisible?`<span class="tl-today-continuous" style="left:${pos(todayDay+.5)}%"></span>`:''}</div>`;
 }
 
-document.addEventListener('click',e=>{const b=e.target.closest('[data-jump]');if(!b)return;$('search').value='';render();const target=$('activity-'+b.dataset.jump);if(target){collapsedActivities.delete(String(b.dataset.jump));persistCollapsed();target.classList.remove('is-collapsed');target.querySelector('.collapse-btn')?.setAttribute('aria-expanded','true');target.querySelector('.collapse-btn').textContent='−';target.scrollIntoView({behavior:'smooth',block:'center'});history.replaceState(null,'','#activity-'+b.dataset.jump)}});
+// One transient selection is highlighted on BOTH representations. A subsequent
+// refresh can replace the elements without losing the highlight before it expires.
+const NAV_HALO_DURATION_MS=4200;
+let selectedActivityId=null,selectionExpiresAt=0,selectionTimer=null;
+function showSelectedActivity(){
+ document.querySelectorAll('.dydem-selection-halo').forEach(el=>el.classList.remove('dydem-selection-halo'));
+ if(!selectedActivityId||Date.now()>=selectionExpiresAt){selectedActivityId=null;return}
+ const id=String(selectedActivityId),listCard=$('activity-'+id);
+ const timelineCard=$('timeline')?.querySelector('[data-timeline-activity="'+id+'"] .tl-project-card');
+ listCard?.classList.add('dydem-selection-halo');
+ timelineCard?.classList.add('dydem-selection-halo');
+}
+function highlightActivity(id){
+ selectedActivityId=String(id);selectionExpiresAt=Date.now()+NAV_HALO_DURATION_MS;
+ if(selectionTimer!==null)clearTimeout(selectionTimer);
+ showSelectedActivity();
+ selectionTimer=setTimeout(()=>{selectionTimer=null;selectedActivityId=null;showSelectedActivity()},NAV_HALO_DURATION_MS);
+}
+function jumpToActivity(id){
+ if(!task(id))return;
+ $('search').value='';
+ if(collapsedActivities.delete(String(id)))persistCollapsed();
+ render();
+ highlightActivity(id);
+ const target=$('activity-'+id);
+ if(target)target.scrollIntoView({behavior:'smooth',block:'center',inline:'nearest'});
+ history.replaceState(null,'','#activity-'+encodeURIComponent(String(id)));
+}
+function jumpToTimeline(id){
+ if(!task(id))return;
+ const timeline=$('timeline');
+ let row=timeline?.querySelector('[data-timeline-activity="'+String(id)+'"]');
+ if(!row){render();row=timeline?.querySelector('[data-timeline-activity="'+String(id)+'"]')}
+ if(!row)return;
+ highlightActivity(id);
+ // Scroll the timeline horizontally to the beginning of the selected bar,
+ // and vertically to its row, even if that row is far down the cronograma.
+ const card=row.querySelector('.tl-project-card');
+ if(card&&timeline){
+  const focusOffset=Math.min(card.offsetWidth/2,Math.max(12,timeline.clientWidth*.35));
+  const desired=card.offsetLeft+focusOffset-timeline.clientWidth/2;
+  timeline.scrollTo({left:Math.max(0,Math.min(timeline.scrollWidth-timeline.clientWidth,desired)),behavior:'smooth'});
+ }
+ const rect=row.getBoundingClientRect();
+ const desiredY=window.scrollY+rect.top-(window.innerHeight-rect.height)*.42;
+ window.scrollTo({top:Math.max(0,desiredY),behavior:'smooth'});
+ history.replaceState(null,'','#timeline');
+}
+document.addEventListener('click',e=>{
+ const b=e.target.closest('[data-jump]');
+ if(b)jumpToActivity(b.dataset.jump);
+});
 
 const COLLAPSE_KEY='dydem-online-collapsed-activities-v1';
 let collapsePreferencesInitialized=false;
@@ -655,7 +722,7 @@ window.addEventListener('resize',()=>{
  const host=$('timeline');
  if(host)host.innerHTML=timelineHTML(false,compactTimeline,mobile);
 });
-function render(){const w=weekInfo();document.querySelector('header small').textContent=`CONTROL DE OBRA · SEMANA ${w.week} / ${w.year}`;document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;let q=$('search').value.toLowerCase();const counts={'Por empezar':0,'En proceso':0,'Terminado':0};tasks.forEach(t=>counts[status(t)]++);$('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];$('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];$('board').innerHTML=['Por empezar','En proceso','Terminado'].map(st=>{const list=tasks.filter(t=>status(t)===st&&(`${t.id} ${t.title}`).toLowerCase().includes(q));return `<section class="column"><h2>${st} (${counts[st]})</h2>${list.length?list.map(card).join(''):'<div class="empty">Sin actividades</div>'}</section>`}).join('');setTimelineButtonLabel();$('timeline').innerHTML=timelineHTML(false,compactTimeline,isMobileTimeline());}
+function render(){rememberOpenStages();const w=weekInfo();document.querySelector('header small').textContent=`CONTROL DE OBRA · SEMANA ${w.week} / ${w.year}`;document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;let q=$('search').value.toLowerCase();const counts={'Por empezar':0,'En proceso':0,'Terminado':0};tasks.forEach(t=>counts[status(t)]++);$('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];$('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];$('board').innerHTML=['Por empezar','En proceso','Terminado'].map(st=>{const list=tasks.filter(t=>status(t)===st&&(`${t.id} ${t.title}`).toLowerCase().includes(q));return `<section class="column"><h2>${st} (${counts[st]})</h2>${list.length?list.map(card).join(''):'<div class="empty">Sin actividades</div>'}</section>`}).join('');setTimelineButtonLabel();$('timeline').innerHTML=timelineHTML(false,compactTimeline,isMobileTimeline());showSelectedActivity();}
 function hybridReadOnlyStage(t,i){
  if(approvalStageKey(i)!==null)return `<div class="hybrid-readonly-step" data-step-readonly="${i}"><b class="hybrid-read-label">${i+1}. ${esc(names[i])}:</b><div class="hybrid-read-value">${approvalStageSummary(t,i)}</div></div>`;
  const pct=value=>Math.max(0,Math.min(100,Number(value)||0));
@@ -697,7 +764,7 @@ if(i===5){
 if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que terminó la obra</label><input type="date" data-id="${t.id}" data-field="workCompletedDate" ${canEdit?'':'disabled'} value="${esc(t.workCompletedDate||'')}"></div>`;
 if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true);
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
-return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><span class="number">${esc(t.annex)}</span><h3>${statusDot(t)}${esc(t.title)}</h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}</div></article>`}
+return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details data-stage-activity="${t.id}" data-stage-index="${i}" ${openStageByActivity.get(String(t.id))===i?'open':''}><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}</div></article>`}
 let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
 function close(){if(attachmentUploadBusy){alert('La carga de archivos sigue en curso. Espera a que termine.');return}active=null;$('modal').hidden=true;render()}
 $('modal-cancel').onclick=close;
@@ -894,18 +961,35 @@ async function confirmUploadedAttachment(t,intent){
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
 async function deleteFile(meta){if(!canDeleteDocument())throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
 $('board').addEventListener('click',async e=>{
+ const target=e.target.closest('button[data-jump-timeline]');
+ if(target){jumpToTimeline(target.dataset.jumpTimeline);return}
  const b=e.target.closest('button');if(!b)return;
  const t=task(b.dataset.id||b.dataset.delete||b.dataset.rename||b.dataset.collapse);
  if(!t)return;
- if(b.dataset.collapse){const id=String(t.id);if(collapsedActivities.has(id))collapsedActivities.delete(id);else collapsedActivities.add(id);persistCollapsed();render();return}
+ if(b.dataset.collapse){const id=String(t.id);if(collapsedActivities.has(id))collapsedActivities.delete(id);else{collapsedActivities.add(id);openStageByActivity.delete(id)}persistCollapsed();render();return}
  if(b.dataset.delete){if(!canDeleteActivity())return;if(!confirm(`¿Eliminar actividad ${t.id}?`))return;syncState('Eliminando…',false,true);const {error}=await cloud.rpc('delete_activity',{p_id:t.id,p_expected_revision:revisions.get(Number(t.id))});if(error){alert('No se pudo eliminar: '+messageError(error));await reloadActivities(true);return}collapsedActivities.delete(String(t.id));persistCollapsed();await reloadActivities(true);return}
  if(b.dataset.rename){if(!canEditStep(0))return;let title=prompt('Descripción de la actividad:',t.title);if(title?.trim()){t.title=title.trim();save();render()}return}
  if(b.dataset.edit!==undefined){const i=Number(b.dataset.edit);if((approvalStageKey(i)!==null?isAdmin():canEditStep(i)))editStep(t,i)}
 });
 document.addEventListener('toggle',event=>{
  const d=event.target;
- if(!(d instanceof HTMLDetailsElement)||!d.matches('[data-activity-section]')||!d.isConnected)return;
- sectionOpen.set(d.dataset.sectionKind+':'+d.dataset.activitySection,d.open);
+ if(!(d instanceof HTMLDetailsElement)||!d.isConnected)return;
+ if(d.matches('details[data-stage-activity][data-stage-index]')){
+  const id=d.dataset.stageActivity,stage=Number(d.dataset.stageIndex);
+  if(d.open){
+   const article=d.closest('article.task');
+   article?.querySelectorAll('details[data-stage-activity][data-stage-index]').forEach(other=>{
+    if(other!==d&&other.open)other.open=false;
+   });
+   openStageByActivity.set(id,stage);
+  }else if(openStageByActivity.get(id)===stage){
+   openStageByActivity.delete(id);
+  }
+  return;
+ }
+ if(d.matches('[data-activity-section]')){
+  sectionOpen.set(d.dataset.sectionKind+':'+d.dataset.activitySection,d.open);
+ }
 },true);
 $('board').addEventListener('input',event=>{
  const el=event.target;
