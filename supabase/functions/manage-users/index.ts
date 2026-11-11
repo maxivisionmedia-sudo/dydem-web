@@ -20,6 +20,12 @@ function restrictedPermissions(p:PermissionSet):PermissionSet{
  return {...p,steps:p.steps.map((enabled,i)=>i<5?false:i===5?(p.doc_add||p.doc_delete):enabled)};
 }
 function targetRole(value:unknown){return value==="admin"?"admin":value==="custom"?"custom":"viewer"}
+async function tokenDigest(token:string){
+ const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(token));
+ return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,"0")).join("");
+}
+function validEmail(email:string){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)&&email.length<=254}
+
 
 serve(async (req:Request)=>{
  const origin=req.headers.get("origin")||"";
@@ -39,6 +45,81 @@ serve(async (req:Request)=>{
   const {data:profile,error:profileError}=await admin.from("profiles").select("role,active").eq("id",user.id).single();
   if(profileError||!profile?.active||profile.role!=="admin")return respond(403,{error:"Solo administradores"});
   const input=await req.json();
+  if(input.action==="create-copy-link" || input.action==="renew-copy-link"){
+   const renewing=input.action==="renew-copy-link";
+   let email="",display="",role="viewer";
+   let permissions=emptyPermissions();
+   let pendingId="";
+   if(renewing){
+     pendingId=String(input.user_id||"");
+     if(!/^[0-9a-f-]{36}$/i.test(pendingId))return respond(400,{error:"Usuario de invitación inválido."});
+     const {data:existing,error:existingError}=await admin.from("profiles")
+       .select("id,email,display_name,role,permissions,active,invite_pending,removed_at")
+       .eq("id",pendingId).single();
+     if(existingError||!existing||existing.removed_at||existing.active||!existing.invite_pending)
+       return respond(409,{error:"Solo puedes regenerar enlaces de invitaciones pendientes."});
+     email=String(existing.email).toLowerCase();
+     display=String(existing.display_name||"").trim();
+     role=existing.role;
+     permissions=existing.permissions||emptyPermissions();
+   }else{
+     email=String(input.email||"").trim().toLowerCase();
+     display=String(input.name||"").trim();
+     role=targetRole(input.role);
+     if(role==="custom"&&!validPermissions(input.permissions))
+       return respond(400,{error:"Selecciona los permisos del usuario personalizado."});
+     permissions=role==="custom" ? restrictedPermissions(input.permissions as PermissionSet) : emptyPermissions();
+   }
+   if(!validEmail(email)||!display||display.length>120)
+     return respond(400,{error:"Correo o nombre inválido."});
+   if(!renewing){
+     const {data:profiles,error:profilesError}=await admin.from("profiles")
+       .select("id,email,active,invite_pending,removed_at");
+     if(profilesError)return respond(500,{error:"No se pudo verificar el directorio."});
+     if((profiles||[]).some(p=>String(p.email).trim().toLowerCase()===email))
+       return respond(409,{error:"Este correo ya está registrado. Si su invitación está pendiente, usa «Regenerar enlace»."});
+     if((profiles||[]).filter(p=>!p.removed_at&&(p.active||p.invite_pending)).length>=5)
+       return respond(409,{error:"Se alcanzó el límite de cinco usuarios activos o invitados."});
+     // Detect accounts without a profile; never claim an existing auth identity.
+     const {data:authListing,error:listError}=await admin.auth.admin.listUsers({page:1,perPage:1000});
+     if(listError)return respond(503,{error:"No se pudo verificar que el correo sea nuevo."});
+     if((authListing?.users||[]).some(u=>String(u.email||"").toLowerCase()===email))
+       return respond(409,{error:"Este correo ya existe en la autenticación de Supabase. Revisa su cuenta antes de invitarlo."});
+   }
+   const authType=renewing?"magiclink":"invite";
+   const {data:generated,error:generateError}=await admin.auth.admin.generateLink({
+     type:authType,email,options:{data:{display_name:display},redirectTo:defaultSite}
+   });
+   if(generateError||!generated?.user?.id||!generated.properties?.hashed_token)
+     return respond(400,{error:"No se pudo generar un enlace firmado: "+(generateError?.message||"Respuesta incompleta de Supabase Auth")});
+   const authId=generated.user.id;
+   if(renewing&&authId!==pendingId)
+     return respond(409,{error:"La autenticación no coincide con el usuario invitado."});
+   const token=String(generated.properties.hashed_token);
+   if(token.length<16||token.length>512)
+     return respond(500,{error:"Supabase devolvió un formato de invitación inesperado."});
+   if(!renewing){
+     const {error:profileError}=await admin.from("profiles").upsert({
+       id:authId,email,display_name:display,role,permissions,
+       active:false,invite_pending:true,approval_reminders_enabled:false
+     },{onConflict:"id"});
+     if(profileError)return respond(500,{error:"Se generó el enlace, pero no se pudo registrar el usuario. No se entregó el enlace."});
+   }else{
+     const {error:revokeError}=await admin.from("dydem_invitation_links")
+       .update({revoked_at:new Date().toISOString()})
+       .eq("invited_user",authId).is("accepted_at",null).is("revoked_at",null);
+     if(revokeError)return respond(500,{error:"No se pudo revocar la invitación anterior."});
+   }
+   const expiresAt=new Date(Date.now()+60*60*1000).toISOString();
+   const {error:saveError}=await admin.from("dydem_invitation_links").insert({
+     token_digest:await tokenDigest(token),invited_user:authId,
+     invited_email:email,created_by:user.id,expires_at:expiresAt
+   });
+   if(saveError)return respond(500,{error:"No se pudo registrar la verificación del enlace. No se entregó ningún enlace."});
+   const inviteUrl=defaultSite+"#invite="+encodeURIComponent(token)+"&kind="+authType;
+   return respond(200,{ok:true,method:"copy-link",link:inviteUrl,email,
+     name:display,expires_at:expiresAt,one_time:true});
+  }
   if(input.action==="invite" || input.action==="create-password-user"){
    const email=String(input.email||"").trim().toLowerCase();
    const display=String(input.name||"").trim();
@@ -103,8 +184,10 @@ serve(async (req:Request)=>{
    const id=String(input.user_id||"");
    if(!/^[0-9a-f-]{36}$/i.test(id)||typeof input.active!=="boolean")return respond(400,{error:"Solicitud inválida"});
    if(id===user.id&&input.active===false)return respond(400,{error:"No puedes desactivar tu cuenta"});
-   const {data:target,error:targetError}=await admin.from("profiles").select("role,active").eq("id",id).single();
+   const {data:target,error:targetError}=await admin.from("profiles").select("role,active,invite_pending").eq("id",id).single();
    if(targetError||!target)return respond(404,{error:"Usuario no encontrado"});
+   if(input.active&&target.invite_pending)
+     return respond(409,{error:"Esta cuenta solo puede activarse al verificar su enlace de invitación."});
    if(!input.active&&target.active&&target.role==="admin"){
     const {count}=await admin.from("profiles").select("id",{head:true,count:"exact"}).eq("role","admin").eq("active",true);
     if((count||0)<=1)return respond(400,{error:"Debe quedar un administrador activo"});
