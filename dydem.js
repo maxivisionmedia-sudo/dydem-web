@@ -1708,83 +1708,142 @@ function pdf(){
  printWindow('DYDEM - Reporte de actividades',content,css);
 }
 function pdfTimeline(){
- const wi=weekInfo(),d=timelineData(),days=d.total;
- // Fit both axes. Compact mode is selected when full-height cards would be too small.
- const pageW=1040,pageH=700;
- const naturalWidth=Math.max(880,days*76);
- const fullHeight=105+tasks.length*54,smallHeight=105+tasks.length*31;
- const fullScale=Math.min(pageW/naturalWidth,pageH/fullHeight);
- const compact=fullScale<0.67 && tasks.length>0;
- const naturalHeight=compact?smallHeight:fullHeight;
- const scale=Math.min(1,pageW/naturalWidth,pageH/naturalHeight);
- const body=`<div class="sheet"><div class="scaled" style="width:${naturalWidth}px;transform:scale(${scale});--dot-inverse-scale:${(1/scale).toFixed(5)}"><h1>Cronograma de obra DYDEM</h1><p>Semana ${wi.week} · ${wi.start} al ${wi.end} · ${tasks.length} actividades · Generado ${new Date().toLocaleDateString('es-MX')}</p>${timelineHTML(true,compact)}</div></div>`;
+ const d=timelineData();
+ const WEEKS_PER_SHEET=4,DAYS_PER_SHEET=28,ROWS_PER_SHEET=18;
+ const weekSheets=Math.max(1,Math.ceil(d.weeks.length/WEEKS_PER_SHEET));
+ const activitySheets=Math.max(1,Math.ceil(tasks.length/ROWS_PER_SHEET));
+ const totalSheets=weekSheets*activitySheets;
+ const dayNames=['Lu','Ma','Mi','Ju','Vi','Sa','Do'];
+ const fmtISO=n=>new Date(n*86400000).toISOString().slice(0,10);
+ const fmtShort=n=>{
+  const dt=new Date(n*86400000);
+  return String(dt.getUTCDate()).padStart(2,'0')+'/'+String(dt.getUTCMonth()+1).padStart(2,'0');
+ };
+ const pct=n=>(100*n/DAYS_PER_SHEET).toFixed(5);
+ const today=new Date();
+ const todayN=Math.floor(Date.UTC(today.getFullYear(),today.getMonth(),today.getDate())/86400000);
+ const printed=today.toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'});
+ const part=(from,to,windowStart)=>{
+  if(from===null||to===null||from>to)return null;
+  const lo=Math.max(from,windowStart),hi=Math.min(to,windowStart+DAYS_PER_SHEET-1);
+  return lo<=hi?{left:pct(lo-windowStart),width:pct(hi-lo+1)}:null;
+ };
+ const gridColors=Array.from({length:DAYS_PER_SHEET},(_,day)=>
+  `<span class="pt-cell ${Math.floor(day/7)%2?'pt-white':'pt-blue'} ${day%7===0?'pt-week-start':''}"></span>`
+ ).join('');
+ let sheets=[],sheetIndex=0;
+ for(let weekPage=0;weekPage<weekSheets;weekPage++){
+  const pageStart=d.lo+weekPage*DAYS_PER_SHEET,pageEnd=pageStart+DAYS_PER_SHEET-1;
+  const weekHead=Array.from({length:WEEKS_PER_SHEET},(_,w)=>{
+   const monday=pageStart+w*7,date=new Date(monday*86400000);
+   const weekInfoForDate=weekInfo(new Date(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate()));
+   return `<div class="pt-week ${w%2?'pt-white':'pt-blue'}"><strong>Semana ${weekInfoForDate.week}</strong><small>${fmtShort(monday)} – ${fmtShort(monday+6)}</small></div>`;
+  }).join('');
+  const dayHead=Array.from({length:DAYS_PER_SHEET},(_,i)=>{
+   const n=pageStart+i,date=new Date(n*86400000);
+   return `<div class="pt-day ${Math.floor(i/7)%2?'pt-white':'pt-blue'} ${todayN===n?'pt-today':''}" title="${fmtISO(n)}"><span>${dayNames[i%7]}</span><strong>${String(date.getUTCDate()).padStart(2,'0')}</strong></div>`;
+  }).join('');
+  const todayLine=todayN>=pageStart&&todayN<=pageEnd?
+   `<span class="pt-today-line" style="left:${pct(todayN-pageStart+.5)}%"></span>`:'';
+  for(let activityPage=0;activityPage<activitySheets;activityPage++){
+   const begin=activityPage*ROWS_PER_SHEET,selected=tasks.slice(begin,begin+ROWS_PER_SHEET);
+   const rows=selected.map(t=>{
+    const st=status(t),built=st!=='Terminado'&&st!=='Por empezar'&&isBuilt(t);
+    const state=st==='Terminado'?'pt-finished':st==='Por empezar'?'pt-pending':built?'pt-built':'pt-active';
+    const plannedStart=d.valid(t.start)?d.day(t.start):null;
+    const plannedEnd=d.valid(t.end)?d.day(t.end):null;
+    const actual=d.valid(t.workCompletedDate)?d.day(t.workCompletedDate):null;
+    const projected=plannedStart!==null&&plannedEnd!==null&&plannedEnd>=plannedStart;
+    const initial=projected?plannedStart:actual,final=projected?plannedEnd:actual;
+    const scheduled=part(initial,final,pageStart);
+    const delayed=projected&&actual!==null&&actual>plannedEnd?
+     part(plannedEnd+1,actual,pageStart):null;
+    const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
+    const bar=scheduled?`<div class="pt-bar ${state}" style="left:${scheduled.left}%;width:${scheduled.width}%" title="${esc(t.annex)}: ${esc(t.title)} · Obra ${progress}%"><span class="pt-bar-progress"><span style="width:${progress}%"></span></span></div>`:'';
+    const delayBar=delayed?`<div class="pt-delay" style="left:${delayed.left}%;width:${delayed.width}%" title="Retraso: final proyectado ${esc(t.end)}; fin real ${esc(t.workCompletedDate)}"></div>`:'';
+    const actualMarker=actual!==null&&actual>=pageStart&&actual<=pageEnd?
+     `<span class="pt-actual" style="left:${pct(actual-pageStart+.5)}%" title="Fin de obra real: ${esc(t.workCompletedDate)}">◆</span>`:'';
+    const labelTitle=esc(t.title||'Actividad sin nombre');
+    return `<div class="pt-row"><div class="pt-activity" title="${esc(t.annex)} · ${labelTitle}"><span class="pt-dot ${state}"></span><strong class="pt-annex">${esc(t.annex)}</strong><span class="pt-activity-title">${labelTitle}</span><span class="pt-pct">${progress}%</span></div><div class="pt-track"><div class="pt-cell-grid">${gridColors}</div>${delayBar}${bar}${actualMarker}${todayLine}</div></div>`;
+   }).join('')||'<div class="pt-empty">No hay actividades registradas.</div>';
+   sheetIndex++;
+   const first=selected.length?begin+1:0,last=begin+selected.length;
+   sheets.push(`<section class="pt-sheet">
+    <div class="pt-heading">
+     <div><h1>DYDEM · Cronograma de obra</h1><p>Periodo: ${fmtShort(pageStart)} – ${fmtShort(pageEnd)} · 4 semanas por hoja</p></div>
+     <div class="pt-heading-right">Bloque semanal ${weekPage+1} de ${weekSheets}<br>Generado ${esc(printed)}</div>
+    </div>
+    <div class="pt-calendar">
+     <div class="pt-calendar-heading"><div class="pt-activity-heading">ANEXO · ACTIVIDAD <span>% obra</span></div><div class="pt-time-heading"><div class="pt-weeks">${weekHead}</div><div class="pt-days">${dayHead}</div></div></div>
+     <div class="pt-row-list">${rows}</div>
+    </div>
+    <div class="pt-footer"><span><b class="pt-legend-dot pt-pending"></b> Por empezar <b class="pt-legend-dot pt-active"></b> En proceso <b class="pt-legend-dot pt-built"></b> Obra terminada <b class="pt-legend-dot pt-finished"></b> Finalizado <b class="pt-delay-swatch"></b> Retraso</span><span>Actividades ${first}–${last} de ${tasks.length} · Página ${sheetIndex} de ${totalSheets}</span></div>
+   </section>`);
+  }
+ }
  const css=`
- @media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}}
- .sheet{width:275mm;height:185mm;overflow:hidden;position:relative}.scaled{transform-origin:top left}
- h1{font-size:21px;margin:0 0 4px}p{font-size:12px;margin:0 0 12px}
- .tl-reference-grid{min-width:0!important;width:100%;font-family:Arial,sans-serif}
- .tl-reference-grid{border:1px solid #89939e!important;box-sizing:border-box;overflow:hidden}
- .tl-head-ref{height:72px!important;border-bottom:0!important}
- .tl-weeks-ref{height:32px!important}
- .tl-days-ref{height:40px!important}
- .tl-day-ref{box-sizing:border-box;border-right:1px solid #737d89!important;border-bottom:1px solid #737d89!important}
- .tl-day-ref:last-child{border-right:0!important}
- .tl-today-continuous{position:absolute;top:32px;bottom:0;border-left:4px solid #04bc71;z-index:7;pointer-events:none}
- .tl-head-ref{height:82px;position:relative}.tl-weeks-ref{height:32px;display:flex}
- .tl-week-ref{background:#d9edff!important;border-right:2px solid #8c9cab;text-align:left;font-size:22px;padding-left:6px}
- .tl-week-ref:nth-child(even){background:#fff!important}
- .tl-days-ref{height:40px;display:grid;grid-template-columns:repeat(var(--day-count),minmax(0,1fr))}
- .tl-day-ref{font-size:12px;text-align:center;padding-top:10px;border-right:1px solid #aaa;background:#d9edff!important;white-space:nowrap}
- .tl-day-ref.week-blue{background:#d9edff!important}.tl-day-ref.week-white{background:#fff!important}.tl-day-ref.is-today{background:#60d6a0!important;font-weight:bold}
- .tl-today-tag{display:none}.tl-row-ref{position:relative;height:108px;border-bottom:1px solid #bbb}
- .tl-row-cells{position:absolute;inset:0;display:grid;grid-template-columns:repeat(var(--day-count),minmax(0,1fr))}
- .tl-background-cell{border-right:1px solid #aaa;background:#fff!important}.tl-background-cell.week-blue{background:#d9edff!important}.tl-background-cell.week-white{background:#fff!important}
- .tl-background-cell.week-start{border-left:2px solid #999}
- .tl-project-card{position:absolute;top:15px;height:77px;min-width:68px;border:3px solid #777;background:white!important;border-radius:9px;z-index:3;padding:8px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden}
- .activity-status-dot{display:inline-block;width:12px;height:12px;min-width:12px;min-height:12px;flex:0 0 12px;transform:scale(var(--dot-inverse-scale,1));transform-origin:center center;position:relative;z-index:8;border-radius:50%;margin-right:7px;vertical-align:middle;border:1px solid #888;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
- .tl-card-title{font-size:16px;font-weight:normal;white-space:nowrap;overflow:visible;display:flex;align-items:center;min-width:0;gap:4px}.tl-card-percent{font-size:14px}
- .tl-card-progress{height:10px;border-radius:9px;background:#bbb!important;overflow:hidden}.tl-card-progress>div{height:100%;background:#38b6f4!important}
- .tl-delay{position:absolute;top:15px;height:77px;z-index:2;border:3px solid #777;border-left:0;border-radius:0 9px 9px 0;background:#ee989e!important;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;overflow:hidden;white-space:nowrap}
- .tl-delay-arrow{font-size:24px}.tl-actual-marker{display:none}.tl-today-ref{position:absolute;top:0;bottom:0;border-left:4px solid #04bc71;z-index:6}
- .tl-annex{display:inline-block;flex-shrink:0;font-weight:750;white-space:nowrap;background:#fff;border-radius:3px;padding:0 2px;color:#172033}.tl-title-text{display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.tl-card-link{display:inline-flex!important;align-items:center;gap:4px;min-width:0;max-width:100%;overflow:visible!important}.tl-project-card{overflow:visible!important}.tl-card-title{overflow:visible!important}.tl-card-progress{overflow:hidden}.tl-annex{position:relative;z-index:8}
-
- .tl-project-card.tl-pending{background:#ffd69c!important;border-color:#d92f32!important;top:24px;height:59px}
- .tl-project-card.tl-pending .tl-card-progress{background:#ffc4c4!important}
- .tl-project-card.tl-pending .tl-card-progress>div{background:#d92f32!important}
- .tl-project-card.tl-finished{background:#c5f0d3!important;border-color:#15965c!important}
- .tl-project-card.tl-finished .tl-card-progress{background:#9edcb6!important}
- .tl-project-card.tl-finished .tl-card-progress>div{background:#15965c!important}
- .tl-compact .tl-project-card.tl-pending{top:13px;height:36px}
- ${compact?`.tl-compact .tl-row-ref{height:61px}.tl-compact .tl-project-card{top:8px;height:47px;padding:6px}.tl-compact .tl-delay{top:8px;height:47px}.tl-compact .tl-card-title{font-size:15px}.tl-compact .tl-card-progress{height:8px}`:''}
-
- .tl-project-card.tl-pending{background:#ffd69c!important;border-color:#d92f32!important;top:24px;height:59px}
- .tl-project-card.tl-pending .tl-card-progress{background:#ffc4c4!important}
- .tl-project-card.tl-pending .tl-card-progress>div{background:#d92f32!important}
- .tl-project-card.tl-finished{background:#c5f0d3!important;border-color:#15965c!important}
- .tl-project-card.tl-finished .tl-card-progress{background:#9edcb6!important}
- .tl-project-card.tl-finished .tl-card-progress>div{background:#15965c!important}
- .tl-compact .tl-project-card.tl-pending{top:13px;height:36px}
-
- /* Mitad de separación vertical también en el cronograma PDF */
- .tl-row-ref{height:54px}
- .tl-project-card,.tl-delay{top:6px;height:40px;padding:3px 6px;border-width:2px}
- .tl-project-card.tl-pending{top:10px;height:30px}
- .tl-card-title{font-size:12px;line-height:1.15}
- .tl-card-percent{font-size:9px;line-height:1.05}
- .tl-card-progress{height:5px}
- .tl-project-card.tl-pending .tl-card-percent{display:none}
- .tl-compact .tl-row-ref{height:31px}
- .tl-compact .tl-project-card,.tl-compact .tl-delay{top:3px;height:24px;padding:2px 4px;border-width:1px}
- .tl-compact .tl-project-card.tl-pending{top:5px;height:20px}
- .tl-compact .tl-card-title{font-size:11px;line-height:1.1}
- .tl-compact .tl-card-progress{height:4px}
- .tl-project-card.tl-built{background:#b9dbff!important;border-color:#2871ba!important;color:#163f74!important}
- .tl-project-card.tl-built .tl-card-progress{background:#cde4fc!important}
- .tl-project-card.tl-built .tl-card-progress>div{background:#327bc7!important}
- `
- printWindow('DYDEM - Cronograma horizontal a color',body,css,true);
+ @page{size:A4 landscape;margin:7mm}
+ *{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+ html,body{margin:0!important;padding:0!important;background:#fff!important;font-family:Arial,Helvetica,sans-serif;color:#172236}
+ .pt-sheet{width:100%;height:194mm;max-height:194mm;display:flex;flex-direction:column;overflow:hidden;break-inside:avoid;page-break-inside:avoid;background:white}
+ .pt-sheet:not(:last-child){break-after:page;page-break-after:always}
+ .pt-heading{height:16mm;flex:none;display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #a5afbd;padding:0 0 1.5mm;gap:6mm}
+ .pt-heading h1{font-size:15pt;line-height:1.15;color:#1b2d49;margin:0 0 1mm}
+ .pt-heading p{font-size:9pt;line-height:1.2;margin:0}
+ .pt-heading-right{text-align:right;font-size:8.2pt;line-height:1.45;color:#506075;white-space:nowrap}
+ .pt-calendar{display:flex;flex-direction:column;flex:1;min-height:0;margin-top:1.5mm;border:1px solid #8896a7;overflow:hidden}
+ .pt-calendar-heading{display:grid;grid-template-columns:56mm minmax(0,1fr);height:16mm;flex:none;border-bottom:1px solid #8494a8}
+ .pt-activity-heading{border-right:1px solid #8494a8;background:#e6edf5;font-size:9pt;font-weight:700;padding:6mm 1.8mm 0;white-space:nowrap}
+ .pt-activity-heading span{float:right;color:#57677c;font-size:7pt;font-weight:400}
+ .pt-time-heading{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+ .pt-weeks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));height:8mm;flex:none}
+ .pt-week{border-right:1px solid #8192a6;display:flex;justify-content:space-between;align-items:center;gap:2px;padding:0 2mm;white-space:nowrap}
+ .pt-week strong{font-size:9pt}.pt-week small{font-size:6.6pt;color:#435468}
+ .pt-days{display:grid;grid-template-columns:repeat(28,minmax(0,1fr));height:8mm;flex:none}
+ .pt-day{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;border-right:.5px solid #9eabb9;line-height:1.1}
+ .pt-day span{font-size:6.4pt;color:#42536b}.pt-day strong{font-size:8.3pt}
+ .pt-day:nth-child(7n+1){border-left:1px solid #65748a}
+ .pt-day.pt-today{background:#81d6b0!important;color:#063d25!important}
+ .pt-blue{background:#dbeeff}.pt-white{background:#fff}
+ .pt-row-list{display:flex;flex-direction:column;flex:1;min-height:0}
+ .pt-row{display:grid;grid-template-columns:56mm minmax(0,1fr);flex:1 1 0;max-height:12.5mm;min-height:0;border-bottom:.45px solid #b5c0ce;break-inside:avoid}
+ .pt-row:last-child{border-bottom:0}
+ .pt-activity{background:#f8fafc;border-right:1px solid #8797a9;display:flex;align-items:center;gap:1.2mm;padding:0 1.2mm;min-width:0;overflow:hidden;white-space:nowrap}
+ .pt-dot{width:2.6mm;height:2.6mm;border-radius:50%;border:1px solid #fff;flex:none}
+ .pt-annex{font-size:8.5pt;flex:none;background:white;border-radius:2px;padding:1px 2px}
+ .pt-activity-title{font-size:8.1pt;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+ .pt-pct{font-size:7.6pt;color:#334b68;flex:none;text-align:right;font-weight:700}
+ .pt-track{position:relative;min-width:0;overflow:hidden}
+ .pt-cell-grid{position:absolute;inset:0;display:grid;grid-template-columns:repeat(28,minmax(0,1fr))}
+ .pt-cell{min-width:0;border-right:.45px solid #a7b3c0}
+ .pt-cell.pt-week-start{border-left:1px solid #8292a5}
+ .pt-bar{position:absolute;top:1mm;bottom:1mm;border:1.1pt solid #3c79bb;border-radius:3px;background:#b9dbff;z-index:3;overflow:hidden;min-width:0}
+ .pt-bar-progress{position:absolute;left:1px;right:1px;bottom:1px;height:1.8mm;background:rgba(255,255,255,.7);border-radius:2px;overflow:hidden}
+ .pt-bar-progress>span{display:block;height:100%;background:#2871ba}
+ .pt-bar.pt-pending{border-color:#df383b;background:#ffd69c}
+ .pt-bar.pt-pending .pt-bar-progress>span{background:#d92f32}
+ .pt-bar.pt-finished{border-color:#16985a;background:#c5f0d3}
+ .pt-bar.pt-finished .pt-bar-progress>span{background:#16985a}
+ .pt-bar.pt-built{border-color:#2871ba;background:#b9dbff}
+ .pt-bar.pt-built .pt-bar-progress>span{background:#327bc7}
+ .pt-bar.pt-active{border-color:#6487aa;background:#d4e8ff}
+ .pt-dot.pt-pending,.pt-legend-dot.pt-pending{background:#e34848}
+ .pt-dot.pt-active,.pt-legend-dot.pt-active{background:#f2c230}
+ .pt-dot.pt-built,.pt-legend-dot.pt-built{background:#327bc7}
+ .pt-dot.pt-finished,.pt-legend-dot.pt-finished{background:#18a566}
+ .pt-delay{position:absolute;top:1mm;bottom:1mm;background:#ee9da2;border:1px dashed #b12e3d;z-index:2;min-width:0}
+ .pt-actual{position:absolute;z-index:5;top:0;transform:translateX(-50%);font-size:8pt;color:#b22637;line-height:1}
+ .pt-today-line{position:absolute;top:0;bottom:0;border-left:1.5pt solid #02a85b;z-index:4;pointer-events:none}
+ .pt-footer{height:8mm;display:flex;justify-content:space-between;align-items:center;gap:4mm;font-size:7.4pt;flex:none;color:#43536a}
+ .pt-footer>span:last-child{white-space:nowrap}
+ .pt-legend-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin:0 2px 0 8px}
+ .pt-legend-dot:first-child{margin-left:0}
+ .pt-delay-swatch{display:inline-block;width:10px;height:5px;background:#ee9da2;border:1px solid #b12e3d;margin:0 3px 0 8px}
+ .pt-empty{font-size:11pt;padding:12mm;text-align:center;color:#6a7280}
+ @media screen{.pt-sheet{margin:0 auto 10mm;border:1px solid #a3b0bf;box-shadow:0 2px 8px #ced6df}}
+ `;
+ printWindow('DYDEM - Cronograma de obra · 4 semanas por hoja',sheets.join(''),css,true);
 }
-
 $('pdf').onclick=pdf;$('pdf-timeline').onclick=pdfTimeline;
 // Arranque sin datos de ejemplo: la base de datos es la fuente única de verdad.
 render();
