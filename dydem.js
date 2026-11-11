@@ -50,6 +50,14 @@ let lastSynced=new Map(),revisions=new Map(),saveBusy=false,savePending=false,re
 const RECOVERY_PENDING_KEY='dydem-recovery-pending-v1';
 const authHashParams=new URLSearchParams(location.hash.replace(/^#/,''));
 const authSearchParams=new URLSearchParams(location.search);
+let inviteMode=authHashParams.has('invite');
+let inviteToken=String(authHashParams.get('invite')||'');
+let inviteKind=authHashParams.get('kind')==='magiclink'?'magiclink':'invite';
+let inviteOtpVerified=false;
+async function inviteSha256(value){
+ const output=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));
+ return Array.from(new Uint8Array(output),n=>n.toString(16).padStart(2,'0')).join('');
+}
 let recoverMode=authHashParams.get('type')==='recovery'||authSearchParams.get('type')==='recovery'||
   (storeGet(RECOVERY_PENDING_KEY)==='1'&&(authHashParams.has('access_token')||authSearchParams.has('code')));
 function showRecoveryForm(){
@@ -57,10 +65,27 @@ function showRecoveryForm(){
  $('access-title').textContent='Establecer nueva contraseña';
  $('access-help').textContent='Enlace de recuperación: crea una nueva contraseña para tu cuenta DYDEM.';
  $('access-form').hidden=true;$('recover-password').hidden=true;$('use-recovery-code').hidden=true;
- $('otp-container').hidden=true;$('reset-container').hidden=false;$('access-gate').hidden=false;
+ $('otp-container').hidden=true;$('reset-container').hidden=false;$('invite-activation').hidden=true;$('access-gate').hidden=false;
+}
+function showInvitationForm(){
+ $('access-title').textContent='Invitación verificada a DYDEM';
+ $('access-help').textContent='Para activar tu acceso necesitas el enlace del Administrador y el código recibido por separado.';
+ $('access-form').hidden=true;
+ $('recover-password').hidden=true;
+ $('use-recovery-code').hidden=true;
+ $('otp-container').hidden=true;
+ $('reset-container').hidden=true;
+ $('invite-activation').hidden=false;
+ $('access-gate').hidden=false;
+ if(!inviteToken||inviteToken.length<16){
+  $('invite-activation-feedback').textContent='El enlace de invitación está incompleto o no fue emitido por el Administrador.';
+  $('invite-activation-submit').disabled=true;
+ }
 }
 function showLoginForm(message=''){
  recoverMode=false;
+ inviteMode=false;
+ $('invite-activation').hidden=true;
  $('access-title').textContent='Acceso a DYDEM en línea';
  $('access-help').textContent='Inicia sesión con el correo electrónico de tu cuenta.';
  $('access-form').hidden=false;$('recover-password').hidden=false;$('use-recovery-code').hidden=false;
@@ -173,6 +198,59 @@ async function save(){if(!canEditAnyStep())return;savePending=true;if(saveBusy)r
  }}catch(e){savePending=false;const msg=messageError(e);syncState('Cambios pendientes: error',true);alert('No se pudo confirmar el guardado en el servidor. Los cambios siguen visibles en esta pestaña y puedes reintentar con «Guardar cambios». No cierres la página sin guardarlos. Detalle: '+msg);return}finally{saveBusy=false}
  syncState('Guardado');render();if(refreshQueued)reloadActivities().catch(()=>syncState('Sincronización pendiente',true));
 }
+$('invite-activation').addEventListener('submit',async e=>{
+ e.preventDefault();
+ const submit=$('invite-activation-submit'),feedback=$('invite-activation-feedback');
+ if(!cloud||!inviteMode||!inviteToken)return;
+ const code=$('invite-activation-code').value.trim().toUpperCase().replace(/\s+/g,'');
+ const password=$('invite-activation-password').value;
+ const confirmation=$('invite-activation-confirm').value;
+ if(!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{12}$/.test(code)){
+  feedback.textContent='El código de activación debe tener 12 caracteres válidos.';return;
+ }
+ if(password.length<12||password!==confirmation){
+  feedback.textContent='La contraseña debe tener al menos 12 caracteres y coincidir en ambos campos.';return;
+ }
+ submit.disabled=true;
+ feedback.textContent='Verificando la invitación…';
+ try{
+  if(!inviteOtpVerified){
+   const {data:{session}}=await cloud.auth.getSession();
+   if(session?.user){
+    const {data:p}=await cloud.from('profiles').select('id,invite_pending,active').eq('id',session.user.id).maybeSingle();
+    if(p?.invite_pending&&!p.active)inviteOtpVerified=true;
+   }
+   if(!inviteOtpVerified){
+    const {data,error}=await cloud.auth.verifyOtp({token_hash:inviteToken,type:inviteKind});
+    if(error)throw Error('El enlace no fue validado por Supabase: '+messageError(error));
+    if(!data?.user?.id)throw Error('No se pudo autenticar a la persona invitada.');
+    inviteOtpVerified=true;
+   }
+  }
+  // Password changes alone never enable DYDEM: server checks the stored invite
+  // token, independent activation code, recipient identity, expiry and one use.
+  feedback.textContent='Protegiendo la cuenta y verificando el código…';
+  const update=await cloud.auth.updateUser({password});
+  if(update.error)throw update.error;
+  const {data:accepted,error:activationError}=await cloud.rpc('dydem_accept_invitation',{
+   p_token_digest:await inviteSha256(inviteToken),
+   p_code_digest:await inviteSha256(code)
+  });
+  if(activationError)throw activationError;
+  if(!accepted?.ok)throw Error(accepted?.error||'La invitación no fue autorizada.');
+  inviteMode=false;inviteToken='';inviteOtpVerified=false;
+  history.replaceState(null,'',location.pathname+location.search);
+  $('invite-activation').hidden=true;
+  $('invite-activation-code').value='';
+  $('invite-activation-password').value='';
+  $('invite-activation-confirm').value='';
+  feedback.textContent='';
+  await loadAccount();
+  syncState('Cuenta verificada y activada');
+ }catch(err){
+  feedback.textContent='No se pudo activar: '+messageError(err);
+ }finally{submit.disabled=false}
+});
 $('access-form').addEventListener('submit',async e=>{e.preventDefault();if(!cloud)return;const btn=$('access-submit');btn.disabled=true;$('access-error').textContent='';try{const {error}=await cloud.auth.signInWithPassword({email:$('access-user').value.trim(),password:$('access-pass').value});if(error)throw error;await loadAccount()}catch(err){$('access-error').textContent='No se pudo iniciar sesión: '+messageError(err)}finally{btn.disabled=false;$('access-pass').value=''}});
 $('signout').onclick=()=>{if((isDirty()||saveBusy)&&!confirm('Hay cambios que aún no se han guardado. ¿Cerrar sesión y descartarlos?'))return;leaveAccount().catch(e=>alert(messageError(e)))};
 $('reload-cloud').onclick=()=>{if((saveBusy||isDirty())&&!confirm('Hay cambios aún no confirmados. ¿Descartar los cambios locales y actualizar desde el servidor?'))return;reloadActivities(true).catch(e=>alert('Error: '+messageError(e)))};
@@ -428,8 +506,10 @@ $('user-list').onclick=async e=>{
 async function initializeOnline(){
  const cfg=connectionConfig();if(!cfg){showSetupError();return}
  cloud=window.supabase.createClient(cfg.url,cfg.anonKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
- // Preparar interfaz antes de que el SDK procese el fragmento #access_token.
- if(recoverMode)showRecoveryForm();
+ // Only administrator-issued one-time invites use the #invite= fragment.
+ // Do not auto-redeem on page load (chat previews must not consume links).
+ if(inviteMode)showInvitationForm();
+ else if(recoverMode)showRecoveryForm();
  cloud.auth.onAuthStateChange((event)=>{
   if(event==='PASSWORD_RECOVERY'){
    showRecoveryForm();$('access-error').textContent='Enlace validado. Escribe tu nueva contraseña.';
@@ -438,6 +518,11 @@ async function initializeOnline(){
   if(event==='SIGNED_OUT'&&currentAccount)void leaveAccount(false);
  });
  try{
+  if(inviteMode){
+   showInvitationForm();
+   syncState('Invitación pendiente de verificación');
+   return;
+  }
   await loadAccount();
   if(recoverMode){
    const {data:{session}}=await cloud.auth.getSession();
