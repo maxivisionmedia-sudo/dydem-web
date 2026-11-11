@@ -6,7 +6,7 @@ function storeGet(key){try{return localStorage.getItem(key)}catch(e){return fall
 function storeSet(key,value){fallbackStorage.set(key,value);try{localStorage.setItem(key,value);return true}catch(e){return false}}
 function weekInfo(date=new Date()){const d=new Date(Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()));d.setUTCDate(d.getUTCDate()-(d.getUTCDay()||7)+1);const start=new Date(d),end=new Date(d);end.setUTCDate(end.getUTCDate()+6);const th=new Date(d);th.setUTCDate(th.getUTCDate()+3);const year=th.getUTCFullYear(),jan4=new Date(Date.UTC(year,0,4));jan4.setUTCDate(jan4.getUTCDate()-(jan4.getUTCDay()||7)+1);const week=1+Math.round((d-jan4)/604800000),iso=x=>x.toISOString().slice(0,10);return {year,week,start:iso(start),end:iso(end),code:`${year}-S${String(week).padStart(2,'0')}`}}
 function assignAnnexes(){const counts={};tasks.forEach(t=>{if(!t.weekCode){t.weekCode='2026-S43';t.weekNumber=43;t.weekStart='2026-10-19';t.weekEnd='2026-10-25'}const wk=t.weekNumber||43;if(!t.annex){counts[t.weekCode]=(counts[t.weekCode]||0)+1;t.annex=`${wk}_${counts[t.weekCode]}`}else counts[t.weekCode]=Math.max(counts[t.weekCode]||0,Number(t.annex.split('_')[1])||0)})}
-const fresh=t=>({...t,start:'',end:'',before:'',after:'',reviewers:'',reviewAnnex:'',authorizer:'',progress:0,evidenceProgress:0,verification:0,attachments:[],proposalAttachments:[],proposalDescription:'',completedDate:'',workCompletedDate:'',responsibles:{review:[],authorization:[],verification:[]},approvals:{review:[],authorization:[],verification:[]},steps:[false,false,false,false,false,false,false]});
+const fresh=t=>({...t,start:'',end:'',before:'',after:'',reviewers:'',reviewAnnex:'',authorizer:'',progress:0,evidenceProgress:0,verification:0,attachments:[],proposalAttachments:[],reviewAttachments:[],manualApprovals:{review:false,authorization:false,verification:false},proposalDescription:'',completedDate:'',workCompletedDate:'',responsibles:{review:[],authorization:[],verification:[]},approvals:{review:[],authorization:[],verification:[]},steps:[false,false,false,false,false,false,false]});
 function migrate(t){
  const n=fresh({id:t.id,title:t.title});
  const keys=['review','authorization','verification'],responsibles={},approvals={};
@@ -17,6 +17,8 @@ function migrate(t){
  return {...n,...t,steps:Array.isArray(t.steps)?t.steps.slice(0,7):n.steps,
   attachments:Array.isArray(t.attachments)?t.attachments:[],
   proposalAttachments:Array.isArray(t.proposalAttachments)?t.proposalAttachments:[],
+  reviewAttachments:Array.isArray(t.reviewAttachments)?t.reviewAttachments:[],
+  manualApprovals:{review:!!t.manualApprovals?.review,authorization:!!t.manualApprovals?.authorization,verification:!!t.manualApprovals?.verification},
   proposalDescription:typeof t.proposalDescription==='string'?t.proposalDescription:'',
   progress:Math.max(0,Math.min(100,Number(t.progress)||0)),
   evidenceProgress:Math.max(0,Math.min(100,Number(t.evidenceProgress)||0)),
@@ -27,7 +29,7 @@ const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g
 
 // Autenticación y datos centralizados: nunca se almacenan contraseñas en DYDEM.
 let currentAccount=null,cloud=null,authReady=false,subscription=null,refreshTimer=null;
-let commentsByActivity=new Map(),commentDrafts=new Map(),sectionOpen=new Map();
+let commentsByActivity=new Map(),commentDrafts=new Map(),commentFileRefsDrafts=new Map(),sectionOpen=new Map();
 // Expanded stage panels are UI state, not server data: preserve them across
 // periodic Supabase refreshes and while other users edit the activity.
 const openStageByActivity=new Map();
@@ -722,14 +724,26 @@ async function loadResponsibleUsers(){
  availableResponsibles=Array.isArray(data)?data.map(p=>({id:String(p.id),display_name:String(p.display_name||'Usuario')})):[];
 }
 function canApproveStage(t,i){
- return isSignedIn()&&approvalStageKey(i)!==null&&stagePeople(t,i).includes(currentAccount?.id);
+ return isSignedIn()&&approvalStageKey(i)!==null&&
+  (stagePeople(t,i).includes(currentAccount?.id)||(isAdmin()&&stagePeople(t,i).length===0));
+}
+function canAddReviewFile(t){return !!t&&isSignedIn()&&(isAdmin()||
+ (!!t.steps?.[0]&&!t.steps?.[1]&&(stagePeople(t,1).includes(currentAccount.id)||canAddDocument())))}
+function canRemoveReviewFile(t){return !!t&&isSignedIn()&&(isAdmin()||
+ (!!t.steps?.[0]&&!t.steps?.[1]&&(stagePeople(t,1).includes(currentAccount.id)||canDeleteDocument())))}
+function canManageReviewFiles(t){return canAddReviewFile(t)||canRemoveReviewFile(t)}
+function reviewFilesSection(t){
+ return `<div class="review-files-panel"><b>Archivos para Revisión (opcionales)</b>
+ <div class="review-files-list">${viewerReviewLinks(t)}</div>
+ ${canManageReviewFiles(t)?`<button type="button" class="btn secondary" data-review-files="${t.id}" data-id="${t.id}">Gestionar archivos de Revisión</button>`:''}
+ ${t.steps[1]&&!isAdmin()?'<small class="muted">Revisión finalizada. Archivos de solo lectura.</small>':''}</div>`;
 }
 function isApprovalReady(t,i){
  return i===1?!!t.steps?.[0]:i===2?!!t.steps?.[1]:i===4?!!t.steps?.[2]&&!!t.steps?.[3]:false;
 }
 function pendingMyApprovalStages(t){
  if(!isSignedIn())return [];
- return [1,2,4].filter(i=>isApprovalReady(t,i)&&
+ return [1,2,4].filter(i=>!t.steps?.[i]&&isApprovalReady(t,i)&&
   stagePeople(t,i).includes(currentAccount.id)&&
   !approvedPeople(t,i).includes(currentAccount.id));
 }
@@ -742,15 +756,17 @@ function approvalStageSummary(t,i,editable=false){
  const namesList=(ids,empty)=>ids.length?
   `<ul class="approval-compact-names">${ids.map(id=>`<li>${esc(responsibleName(id))}</li>`).join('')}</ul>`:
   `<span class="approval-compact-empty">${empty}</span>`;
- const myVote=canApproveStage(t,i);
- const prevReady=i===1?t.steps[0]:i===2?t.steps[1]:(t.steps[2]&&t.steps[3]);
- const mine=approved.has(currentAccount?.id);
- const vote=myVote?`<label class="approval-vote"><input type="checkbox" data-vote-stage="${i}" data-id="${t.id}" ${mine?'checked':''} ${!prevReady&&!mine?'disabled':''}>
- <span>${mine?'He aprobado esta etapa':'Confirmar mi aprobación'}</span></label>`:'';
+ const myVote=canApproveStage(t,i),manual=isAdmin()&&responsible.length===0;
+ const prevReady=isApprovalReady(t,i);
+ const mine=manual?!!t.manualApprovals?.[approvalStageKey(i)]:approved.has(currentAccount?.id);
+ const locked=!!t.steps[i]&&!isAdmin();
+ const vote=myVote?`<label class="approval-vote"><input type="checkbox" data-vote-stage="${i}" data-id="${t.id}" ${mine?'checked':''} ${(!prevReady&&!mine)||locked?'disabled':''}>
+ <span>${manual?(mine?'Aprobación administrativa registrada':'Aprobar etapa como Administrador'):locked?'Etapa finalizada · confirmación bloqueada':mine?'He aprobado esta etapa':'Confirmar mi aprobación'}</span></label>`:'';
  const config=isAdmin()?`<button type="button" class="btn secondary approval-config" data-edit="${i}" data-id="${t.id}">Asignar responsables</button>`:'';
  return `<div class="approval-compact">
   <div class="approval-compact-line"><b>Pendientes:</b>${namesList(pending,responsible.length?'Ninguno':'Sin responsables asignados')}</div>
   <div class="approval-compact-line"><b>Confirmaron:</b>${namesList(confirmed,'Ninguno')}</div>
+  ${manual&&mine?'<small class="muted">Confirmada por el Administrador (sin responsables).</small>':''}
   ${vote||config?`<div class="approval-compact-actions">${vote}${config}</div>`:''}
  </div>`;
 }
@@ -984,11 +1000,11 @@ function viewerAttachmentLinks(t){
  return (saved+' '+pending).trim()||'<span class="muted">Sin anexos adjuntos</span>';
 }
 
-function viewerProposalLinks(t){
- const saved=(Array.isArray(t.proposalAttachments)?t.proposalAttachments:[]).map(a=>attachmentActions(t,a)).join(' ');
- const pending=pendingForActivity(t.id,'proposal').map(a=>
+function viewerReviewLinks(t){
+ const saved=(Array.isArray(t.reviewAttachments)?t.reviewAttachments:[]).map(a=>attachmentActions(t,a)).join(' ');
+ const pending=pendingForActivity(t.id,'review').map(a=>
   `<span class="pending-attachment-label">⏳ ${esc(a.file_name)} (pendiente)</span>`).join(' ');
- return (saved+' '+pending).trim()||'<span class="muted">Sin archivos de Propuesta</span>';
+ return (saved+' '+pending).trim()||'<span class="muted">Sin archivos para Revisión</span>';
 }
 function viewerCard(t){
  const state=status(t),stateClass=state==='Por empezar'?'status-pending':state==='Terminado'?'status-finished':'status-active';
@@ -996,7 +1012,7 @@ function viewerCard(t){
  const stageOpen=sectionIsOpen(t.id,'stages')?' open':'';
  const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
 
- const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step proposal-view"><b>Descripción (opcional):</b><span class="proposal-description-text">${esc(t.proposalDescription||'Sin descripción')}</span></div><div class="viewer-step proposal-view"><b>Archivos de Propuesta (opcionales):</b><span>${viewerProposalLinks(t)}</span></div><div class="viewer-step review-with-dudas"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}</div><div class="review-dudas-wide">${dudasSection(t)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span><strong>Progreso de Evidencia: ${evidencePct(t)}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}</span></div><div class="viewer-progress"><div style="width:${evidencePct(t)}%"></div></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
+ const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step proposal-view"><b>Descripción (opcional):</b><span class="proposal-description-text">${esc(t.proposalDescription||'Sin descripción')}</span></div><div class="viewer-step review-with-dudas"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}</div><div class="review-dudas-wide">${reviewFilesSection(t)}${dudasSection(t)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span><strong>Progreso de Evidencia: ${evidencePct(t)}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}</span></div><div class="viewer-progress"><div style="width:${evidencePct(t)}%"></div></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
  return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${needsMyApproval(t)?'needs-my-approval':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`;
 }
 function isMobileTimeline(){return typeof window!=='undefined' && window.matchMedia('(max-width: 760px)').matches}
@@ -1124,7 +1140,7 @@ function render(){rememberOpenStages();const w=weekInfo();document.querySelector
  }
  $('board').innerHTML=['Por empezar','En proceso','Terminado'].map(st=>{const list=tasks.filter(t=>status(t)===st&&(`${t.id} ${t.title}`).toLowerCase().includes(q));return `<section class="column"><h2>${st} (${counts[st]})</h2>${list.length?list.map(card).join(''):'<div class="empty">Sin actividades</div>'}</section>`}).join('');setTimelineButtonLabel();$('timeline').innerHTML=timelineHTML(false,compactTimeline,isMobileTimeline());showSelectedActivity();}
 function hybridReadOnlyStage(t,i){
- if(approvalStageKey(i)!==null)return `<div class="hybrid-readonly-step ${i===1?'review-with-dudas':''}" data-step-readonly="${i}"><b class="hybrid-read-label">${i+1}. ${esc(names[i])}:</b><div class="hybrid-read-value">${approvalStageSummary(t,i)}</div>${i===1?`<div class="review-dudas-wide">${dudasSection(t)}</div>`:''}</div>`;
+ if(approvalStageKey(i)!==null)return `<div class="hybrid-readonly-step ${i===1?'review-with-dudas':''}" data-step-readonly="${i}"><b class="hybrid-read-label">${i+1}. ${esc(names[i])}:</b><div class="hybrid-read-value">${approvalStageSummary(t,i)}</div>${i===1?`<div class="review-dudas-wide">${reviewFilesSection(t)}${dudasSection(t)}</div>`:''}</div>`;
  const pct=value=>Math.max(0,Math.min(100,Number(value)||0));
  let content='';
  let progress='';
@@ -1133,7 +1149,7 @@ function hybridReadOnlyStage(t,i){
    <small>Debe completarse antes: ${esc(viewerLinkedActivity(t.before))}</small>
    <small>Solo después de: ${esc(viewerLinkedActivity(t.after))}</small>
    <span class="proposal-description-text"><b>Descripción (opcional):</b> ${esc(t.proposalDescription||'Sin descripción')}</span>
-   <span class="proposal-file-display"><b>Archivos de Propuesta:</b> ${viewerProposalLinks(t)}</span>`;
+`;
  }else if(i===3){
   const value=pct(t.progress);
   content=`<strong>${value}%</strong>${i===3?`<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small>`:''}`;
@@ -1152,11 +1168,9 @@ function hybridReadOnlyStage(t,i){
  </div>`;
 }
 function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{
- if(approvalStageKey(i)!==null&&!isAdmin())return `<div class="viewer-step approval-stage-readonly ${i===1?'review-with-dudas':''}"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}</div>${i===1?`<div class="review-dudas-wide">${dudasSection(t)}</div>`:''}</div>`;
+ if(approvalStageKey(i)!==null&&!isAdmin())return `<div class="viewer-step approval-stage-readonly ${i===1?'review-with-dudas':''}"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}</div>${i===1?`<div class="review-dudas-wide">${reviewFilesSection(t)}${dudasSection(t)}</div>`:''}</div>`;
  if(isCustom()&&!canEditStep(i))return hybridReadOnlyStage(t,i);const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
-if(i===0)detail+=`<div class="field proposal-optional-section"><label for="proposal-description-${t.id}">Descripción (opcional)</label><textarea id="proposal-description-${t.id}" data-id="${t.id}" data-field="proposalDescription" rows="3" maxlength="10000" placeholder="Descripción adicional de la propuesta (opcional)" ${canEdit?'':'disabled'}>${esc(t.proposalDescription||'')}</textarea></div>
- <div class="proposal-files"><b>Archivos de Propuesta (opcionales)</b><div class="detail">${viewerProposalLinks(t)}</div>
- ${canEdit?`<button type="button" class="btn secondary" data-edit="0" data-id="${t.id}">Gestionar Archivos</button>`:''}</div>`;
+if(i===0)detail+=`<div class="field proposal-optional-section"><label for="proposal-description-${t.id}">Descripción (opcional)</label><textarea id="proposal-description-${t.id}" data-id="${t.id}" data-field="proposalDescription" rows="3" maxlength="10000" placeholder="Descripción adicional de la propuesta (opcional)" ${canEdit?'':'disabled'}>${esc(t.proposalDescription||'')}</textarea></div>`;
 if(i===3){const v=t.progress;detail=`<div class="row" style="margin-top:6px"><span class="muted">Avance de obra</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="progress" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
 if(i===5){
  const value=evidencePct(t);
@@ -1167,7 +1181,7 @@ if(i===5){
  <div class="detail evidence-file-list">${viewerAttachmentLinks(t)}</div>`;
 }
 if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que terminó la obra</label><input type="date" data-id="${t.id}" data-field="workCompletedDate" ${canEdit?'':'disabled'} value="${esc(t.workCompletedDate||'')}"></div>`;
-if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true)+(i===1?dudasSection(t):'');
+if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true)+(i===1?reviewFilesSection(t)+dudasSection(t):'');
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
 return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details data-stage-activity="${t.id}" data-stage-index="${i}" ${openStageByActivity.get(String(t.id))===i?'open':''}><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${needsMyApproval(t)?'needs-my-approval':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`}
 let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
