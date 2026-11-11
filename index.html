@@ -852,6 +852,34 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
 #invite-fixed-email{font-size:13px;padding:9px 11px;background:#edf4ff;color:#24466c;border-radius:7px;margin:0}
 #invite-fixed-email[hidden],#invite-registration-email-wrap[hidden]{display:none!important}
 #invite-display-name{box-sizing:border-box;width:100%;border:1px solid #bcc9dc;border-radius:8px;padding:9px 10px;font:inherit}
+
+/* DYDEM Revisión: documentos adjuntos y referencias desde Dudas. */
+.review-files-panel{
+ margin:10px 0 12px;
+ padding:10px 12px;
+ border:1px solid #cbd9e8;border-radius:9px;
+ background:#f7faff;min-width:0;width:100%;box-sizing:border-box;
+ display:flex;flex-direction:column;align-items:stretch;gap:7px;
+}
+.review-files-panel>b{color:#253955;font-size:13px}
+.review-files-panel .review-files-list{width:100%;min-width:0;overflow-wrap:anywhere;line-height:1.6}
+.review-files-panel>.btn{align-self:flex-start;white-space:normal}
+.review-files-panel .attachment-file{max-width:100%;white-space:normal;text-align:left}
+.comment-files-label{display:block;font-size:12px;font-weight:750;color:#344f71;margin:10px 0 5px}
+.comment-files-select{display:block;width:100%;max-width:100%;box-sizing:border-box;padding:5px 8px;
+ border:1px solid #bdcce0;background:white;color:#18283d;border-radius:8px;font-size:12px;
+ min-height:55px;overflow-y:auto}
+.comment-files-select option{padding:4px 3px;overflow-wrap:anywhere}
+.comment-files-help{display:block;color:#6a778a;font-size:11px;line-height:1.35;margin-top:5px}
+.comment-referenced-files{margin-top:9px;padding-top:7px;border-top:1px solid #d8e3f0;min-width:0}
+.comment-referenced-files>b{display:block;font-size:11px;color:#526680;margin-bottom:5px}
+.comment-referenced-files>div{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.comment-referenced-files .attachment-file{max-width:100%;font-size:11px;white-space:normal;overflow-wrap:anywhere}
+.comment-file-unavailable{font-size:11px;color:#8d5a4e;background:#f5ece9;padding:4px 6px;border-radius:4px}
+@media print{
+ .review-files-panel{background:white!important}
+ .comment-files-select,.comment-files-help,.comment-files-label{display:none!important}
+}
 </style></head><body><div id="access-gate"><div class="access-box"><h2 id="access-title">Acceso a DYDEM en línea</h2><p id="access-help">Inicia sesión con el correo electrónico de tu cuenta.</p><form id="access-form"><label>Correo electrónico<input id="access-user" type="email" required autocomplete="username" placeholder="usuario@empresa.com"></label><label>Contraseña<input id="access-pass" type="password" required autocomplete="current-password"></label><p id="access-error" role="alert"></p><button class="btn" type="submit" id="access-submit">Iniciar sesión</button></form><form id="invite-activation" hidden>
  <h3>Registro de usuario DYDEM</h3>
  <p id="invite-registration-description" class="invite-activation-description">Regístrate únicamente con el enlace de invitación autorizado por el Administrador. Se puede utilizar una sola vez.</p>
@@ -900,4 +928,4 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
   <div class="attachment-preview-actions"><button type="button" class="btn" id="attachment-preview-download" data-download="" data-id="">Descargar archivo</button><button type="button" class="btn secondary" id="attachment-preview-close-bottom">Cerrar</button></div>
  </div>
 </div>
-<script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script><script src="./dydem.js?v=20261111-cronograma-pdf-4-semanas-v27"></script></body></html>
+<script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script><script src="./dydem.js?v=20261111-archivos-revision-dudas-v28"></script></body></html>
