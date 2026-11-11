@@ -56,7 +56,7 @@ let inviteToken=String(authHashParams.get('invite')||'');
 let inviteMode=!!inviteToken||
  authHashParams.get('type')==='invite'||authSearchParams.get('type')==='invite'||
  authSearchParams.get('registration')==='email';
-let emailInviteMode=inviteMode&&!inviteToken;
+let emailInviteMode=inviteMode&&(!inviteToken||authHashParams.get('kind')==='magiclink');
 let invitationEmail='',invitationLoaded=false;
 function setInvitationEmail(email,fixed){
  invitationEmail=fixed?String(email||'').trim().toLowerCase():'';
@@ -84,9 +84,16 @@ async function prepareInvitationForm(){
   }else{
    let {data:{session},error:sessionError}=await cloud.auth.getSession();
    if(sessionError)throw sessionError;
-   const hash=authHashParams.get('token_hash')||authSearchParams.get('token_hash');
-   if(!session&&hash){
-    const {data,error}=await cloud.auth.verifyOtp({token_hash:hash,type:'invite'});
+   const hash=inviteToken||authHashParams.get('token_hash')||authSearchParams.get('token_hash');
+   const kind=authHashParams.get('kind')==='magiclink'?'magiclink':'invite';
+   let usableSession=false;
+   if(session?.user?.id){
+    const {data:who}=await cloud.from('profiles')
+     .select('invite_pending,active').eq('id',session.user.id).maybeSingle();
+    usableSession=!!who?.invite_pending&&!who?.active;
+   }
+   if(!usableSession&&hash){
+    const {data,error}=await cloud.auth.verifyOtp({token_hash:hash,type:kind});
     if(error)throw error;
     session=data?.session;
    }
@@ -358,7 +365,9 @@ async function showUsers(){
   const opts=['viewer','custom','admin'].map(r=>`<option value="${r}" ${r===a.role?'selected':''}>${roleLabel(r)}</option>`).join('');
   return `<div class="user-entry">
    <div class="user-summary"><b>${esc(a.display_name||a.email)}</b><span>${esc(a.email)} · ${roleLabel(a.role)} · ${pending?'Invitación pendiente':a.active?'Activo':'Desactivado'}</span><small>Último acceso: ${a.last_login_at?esc(new Date(a.last_login_at).toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'})):'Aún no registrado'}</small>${a.role==='custom'?`<small>${esc(permissionSummary(p))}</small>`:''}</div>
-   <div class="user-actions">${self?'<span class="muted">(sesión actual)</span>':`${pending?
+   <div class="user-actions"><button class="btn secondary" type="button"
+   data-change-username="${esc(a.id)}" data-current-name="${esc(a.display_name||'')}">Editar nombre</button>
+   ${self?'<span class="muted">(sesión actual)</span>':`${pending?
    `<button class="btn secondary" type="button" data-renew-copy-invite="${esc(a.id)}">Regenerar enlace</button>`:
    `<button class="btn secondary" type="button" data-toggle-user="${esc(a.id)}" data-active="${a.active?'true':'false'}">${a.active?'Desactivar':'Reactivar'}</button>`}
   <button class="btn secondary" type="button" data-configure-user="${esc(a.id)}">Configurar permisos</button><button class="btn danger user-remove-btn" type="button" data-remove-user="${esc(a.id)}" data-user-name="${esc(a.display_name||a.email)}">Remover usuario</button>`}</div>
@@ -446,10 +455,11 @@ function displayGeneratedInvitation(data){
  if(!isAdmin()||!data?.link)throw Error('El servidor no entregó un enlace verificable.');
  $('generated-invitation-link').value=data.link;
  const recipient=data.email?'dirigido a '+data.email:'general (el invitado indicará su correo)';
+ const expiry=data.expires_at
+   ?' · válido hasta '+new Date(data.expires_at).toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'})
+   :' · caduca según la configuración de Supabase Auth';
  $('generated-invitation-expiry').textContent=
-  'Enlace '+recipient+' · válido hasta '+
-  new Date(data.expires_at).toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'})+
-  '. Se utiliza una sola vez. No requiere código adicional.';
+  'Enlace '+recipient+expiry+'. Se utiliza una sola vez. No requiere código adicional.';
  $('generated-invitation').hidden=false;
 }
 async function copyGeneratedCredential(inputId,buttonId,label){
@@ -531,11 +541,41 @@ $('user-list').addEventListener('change',e=>{
 $('user-list').onclick=async e=>{
  const toggle=e.target.closest('[data-toggle-user]');
  const renew=e.target.closest('button[data-renew-copy-invite]');
+ const rename=e.target.closest('button[data-change-username]');
  const remove=e.target.closest('button[data-remove-user]');
  const config=e.target.closest('[data-configure-user]');
  const cancel=e.target.closest('[data-cancel-user-permissions]');
  const submit=e.target.closest('[data-save-user-permissions]');
  if(!isAdmin())return;
+ if(rename){
+  const newName=prompt('Nombre que se mostrará en DYDEM:',
+    rename.dataset.currentName||'');
+  if(newName===null)return;
+  const display=newName.trim();
+  if(display.length<2||display.length>120){
+   $('user-error').textContent='El nombre debe tener entre 2 y 120 caracteres.';return;
+  }
+  rename.disabled=true;
+  try{
+   const {data,error}=await cloud.functions.invoke('manage-users',{
+    body:{action:'set-display-name',user_id:rename.dataset.changeUsername,display_name:display}
+   });
+   if(error)throw Error(await edgeErrorMessage(error));
+   if(data?.error||!data?.ok)throw Error(data?.error||'No fue posible guardar el nombre.');
+   if(rename.dataset.changeUsername===currentAccount.id){
+    currentAccount.name=display;currentAccount.display_name=display;
+    $('welcome-user').textContent='Sesión iniciada como: '+display;
+    $('session-label').textContent='Conectado: '+display+' · '+roleLabel(currentAccount.role);
+   }
+   $('user-error').textContent='Nombre de usuario actualizado.';
+   await showUsers();
+   await loadResponsibleUsers();render();
+  }catch(err){
+   $('user-error').textContent='No se pudo modificar el nombre: '+messageError(err);
+   rename.disabled=false;
+  }
+  return;
+ }
  if(renew){
   if(!confirm('¿Generar un enlace nuevo de un solo uso para esta invitación pendiente? No hará falta código adicional.'))return;
   renew.disabled=true;
