@@ -171,7 +171,13 @@ async function loadAccount(){const {data:sessionData,error:sessionError}=await c
   console.warn('No se pudo registrar la fecha de acceso:',messageError(registrationError));
  }
  enterAccount({...profile,display_name:loginName||user.user_metadata?.display_name||profile.email});await reloadActivities(true);startRealtime();if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
-async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;tasks=[];commentsByActivity.clear();pendingAttachmentIntents.clear();pendingFileRegistrations.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');if($('welcome-user')){$('welcome-user').textContent='';$('welcome-user').hidden=true}$('access-gate').hidden=false;$('user-management').hidden=true;$('access-pass').value='';render();syncState('Sin sesión')}
+async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;tasks=[];commentsByActivity.clear();pendingAttachmentIntents.clear();pendingFileRegistrations.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');if($('welcome-user')){$('welcome-user').textContent='';$('welcome-user').hidden=true}$('access-gate').hidden=false;$('user-management').hidden=true;
+ if($('generated-invitation')){
+  $('generated-invitation').hidden=true;
+  $('generated-invitation-link').value='';
+  $('generated-invitation-code').value='';
+ }
+ $('access-pass').value='';render();syncState('Sin sesión')}
 function isDirty(){return tasks.some(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)))}
 async function reloadComments(){
  if(!isSignedIn())return;
