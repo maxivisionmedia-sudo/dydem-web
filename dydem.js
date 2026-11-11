@@ -249,7 +249,7 @@ function isDirty(){return tasks.some(t=>JSON.stringify(t)!==lastSynced.get(Numbe
 async function reloadComments(){
  if(!isSignedIn())return;
  const {data,error}=await cloud.from('activity_comments')
-  .select('id,activity_id,body,created_at,author_id,author_name,thread')
+  .select('id,activity_id,body,created_at,author_id,author_name,thread,attachment_refs')
   .eq('project_id',PROJECT_ID).order('created_at',{ascending:true}).order('id',{ascending:true});
  if(error)throw error;
  const next=new Map();
@@ -803,7 +803,14 @@ function displayCommentTime(value){
 function commentListHTML(t,thread='notes'){
  const comments=commentsFor(t.id,thread);
  if(!comments.length)return `<div class="comment-empty">${thread==='dudas'?'Todavía no hay dudas.':'Todavía no hay notas.'}</div>`;
- return `<div class="comment-list">${comments.map(c=>`<article class="comment-item"><span class="comment-avatar" aria-hidden="true">👤</span><div class="comment-bubble"><div class="comment-meta"><b>${esc(c.author_name||'Usuario')}</b><time>${esc(displayCommentTime(c.created_at))}</time>${isAdmin()?`<button type="button" class="comment-delete" data-delete-comment="${Number(c.id)}" data-comment-activity="${Number(t.id)}" data-comment-thread="${thread}" aria-label="Eliminar ${thread==='dudas'?'duda':'nota'}" title="Eliminar este mensaje">Eliminar</button>`:""}</div><div class="comment-text">${esc(c.body)}</div></div></article>`).join('')}</div>`;
+ return `<div class="comment-list">${comments.map(c=>{
+  const refs=thread==='dudas'&&Array.isArray(c.attachment_refs)?c.attachment_refs:[];
+  const files=refs.map(id=>{
+   const file=(t.reviewAttachments||[]).find(a=>a.id===id);
+   return file?attachmentActions(t,file):`<span class="comment-file-unavailable">Archivo retirado (${esc(String(id).slice(0,8))})</span>`;
+  }).join('');
+  return `<article class="comment-item"><span class="comment-avatar" aria-hidden="true">👤</span><div class="comment-bubble"><div class="comment-meta"><b>${esc(c.author_name||'Usuario')}</b><time>${esc(displayCommentTime(c.created_at))}</time>${isAdmin()?`<button type="button" class="comment-delete" data-delete-comment="${Number(c.id)}" data-comment-activity="${Number(t.id)}" data-comment-thread="${thread}" aria-label="Eliminar ${thread==='dudas'?'duda':'nota'}" title="Eliminar este mensaje">Eliminar</button>`:""}</div><div class="comment-text">${esc(c.body)}</div>${files?`<div class="comment-referenced-files"><b>Archivos de Revisión referenciados:</b><div>${files}</div></div>`:''}</div></article>`;
+ }).join('')}</div>`;
 }
 function sectionIsOpen(id,name){return sectionOpen.get(name+':'+id)!==false}
 // Visible only when the activity is expanded. Uses the exact same delegated
@@ -815,7 +822,15 @@ function threadSection(t,thread='notes'){
  const doubts=thread==='dudas',name=doubts?'Dudas':'Notas',kind=doubts?'dudas':'comments';
  const open=sectionIsOpen(t.id,kind)?' open':'';
  const key=thread+':'+Number(t.id);
- const composer=canPostComment()?`<form class="comment-form" data-comment-form="${t.id}" data-comment-thread="${thread}"><label class="comment-input-label" for="comment-input-${thread}-${t.id}">${doubts?'Escribe una duda':'Añade una nota'}</label><div class="comment-compose"><textarea id="comment-input-${thread}-${t.id}" data-comment-input="${t.id}" data-comment-thread="${thread}" maxlength="2000" rows="2" placeholder="${doubts?'Escribe una duda para el equipo':'Añade una nota'}" required>${esc(commentDrafts.get(key)||'')}</textarea><button type="submit" class="btn comment-submit" aria-label="Publicar ${doubts?'duda':'nota'} de la actividad ${esc(t.annex)}" title="Publicar ${doubts?'duda':'nota'}">↑</button></div><span class="comment-feedback" data-comment-feedback="${t.id}" role="status"></span></form>`:`<p class="comment-readonly-note">Puedes leer ${doubts?'las dudas':'las notas'}, pero no publicar mensajes con tus permisos actuales.</p>`;
+ const closed=doubts&&!!t.steps[1]&&!isAdmin();
+ const files=Array.isArray(t.reviewAttachments)?t.reviewAttachments:[];
+ const chosen=new Set(commentFileRefsDrafts.get(key)||[]);
+ const picker=doubts&&files.length?`<label class="comment-files-label" for="comment-files-${t.id}">Referenciar archivos de Revisión (opcional)</label>
+  <select class="comment-files-select" id="comment-files-${t.id}" data-comment-refs="${t.id}" data-comment-thread="dudas" multiple size="${Math.min(5,Math.max(2,files.length))}">
+   ${files.map(a=>`<option value="${esc(a.id)}" ${chosen.has(a.id)?'selected':''}>${esc(a.name)}</option>`).join('')}
+  </select><small class="comment-files-help">Selecciona uno o varios archivos (Ctrl+clic). Las referencias aparecerán como archivos que se pueden abrir desde la Duda.</small>`: '';
+ const composer=canPostComment()&&!closed?`<form class="comment-form" data-comment-form="${t.id}" data-comment-thread="${thread}"><label class="comment-input-label" for="comment-input-${thread}-${t.id}">${doubts?'Escribe una duda':'Añade una nota'}</label><div class="comment-compose"><textarea id="comment-input-${thread}-${t.id}" data-comment-input="${t.id}" data-comment-thread="${thread}" maxlength="2000" rows="2" placeholder="${doubts?'Escribe una duda para el equipo':'Añade una nota'}" required>${esc(commentDrafts.get(key)||'')}</textarea><button type="submit" class="btn comment-submit" aria-label="Publicar ${doubts?'duda':'nota'} de la actividad ${esc(t.annex)}" title="Publicar ${doubts?'duda':'nota'}">↑</button></div>${picker}<span class="comment-feedback" data-comment-feedback="${t.id}" role="status"></span></form>`:
+  `<p class="comment-readonly-note">${closed?'Revisión finalizada. Las Dudas permanecen visibles, pero solo el Administrador puede publicar mensajes nuevos.':`Puedes leer ${doubts?'las dudas':'las notas'}, pero no publicar mensajes con tus permisos actuales.`}</p>`;
  return `<details class="viewer-section comments-section ${doubts?'dudas-section':''}" data-activity-section="${t.id}" data-section-kind="${kind}"${open}><summary>${name} <span class="comment-count">${commentsFor(t.id,thread).length}</span></summary><div class="viewer-section-inner">${composer}<div data-comment-feed="${t.id}" data-comment-thread="${thread}">${commentListHTML(t,thread)}</div></div></details>`;
 }
 function commentsSection(t){return threadSection(t,'notes')}
@@ -1442,6 +1457,7 @@ document.addEventListener('toggle',event=>{
 $('board').addEventListener('input',event=>{
  const el=event.target;
  if(el.matches('textarea[data-comment-input]'))commentDrafts.set((el.dataset.commentThread||'notes')+':'+Number(el.dataset.commentInput),el.value);
+ if(el.matches('select[data-comment-refs]'))commentFileRefsDrafts.set('dudas:'+Number(el.dataset.commentRefs),[...el.selectedOptions].map(o=>o.value));
  if(el.matches('textarea[data-field="proposalDescription"]')&&isAdmin()){
   const t=task(el.dataset.id);
   if(t)t.proposalDescription=el.value.slice(0,10000);
@@ -1488,14 +1504,19 @@ $('board').addEventListener('submit',async event=>{
  if(!canPostComment())return;
  const activityId=Number(form.dataset.commentForm),activity=task(activityId),thread=form.dataset.commentThread==='dudas'?'dudas':'notes';
  if(!activity)return;
+ if(thread==='dudas'&&activity.steps[1]&&!isAdmin()){
+  const status=form.querySelector('.comment-feedback');if(status)status.textContent='Revisión finalizada. No se permiten nuevas Dudas.';return;
+ }
  const input=form.querySelector('textarea[data-comment-input]'),button=form.querySelector('button[type="submit"]'),feedback=form.querySelector('.comment-feedback');
  const body=input.value.trim();
  if(!body||body.length>2000){feedback.textContent='Escribe entre 1 y 2000 caracteres.';return}
  button.disabled=true;feedback.textContent='Publicando comentario…';
  try{
-  const {error}=await cloud.from('activity_comments').insert({project_id:PROJECT_ID,activity_id:activityId,body,thread});
+  const select=form.querySelector('select[data-comment-refs]');
+  const refs=thread==='dudas'&&select?[...select.selectedOptions].map(o=>o.value):[];
+  const {error}=await cloud.from('activity_comments').insert({project_id:PROJECT_ID,activity_id:activityId,body,thread,attachment_refs:refs});
   if(error)throw error;
-  input.value='';commentDrafts.delete(thread+':'+activityId);
+  input.value='';commentDrafts.delete(thread+':'+activityId);commentFileRefsDrafts.delete(thread+':'+activityId);if(select)[...select.options].forEach(o=>o.selected=false);
   await reloadComments();
   const feed=form.closest('.comments-section').querySelector('[data-comment-feed]');
   if(feed)feed.innerHTML=commentListHTML(activity,thread);
@@ -1509,7 +1530,7 @@ $('board').addEventListener('change',async event=>{
  const checkbox=event.target.closest('input[data-vote-stage]');
  if(!checkbox)return;
  const t=task(checkbox.dataset.id),stage=Number(checkbox.dataset.voteStage);
- if(!t||!canApproveStage(t,stage))return;
+ if(!t||!canApproveStage(t,stage)||t.steps[stage]&&!isAdmin())return;
  checkbox.disabled=true;
  try{
   if(isDirty()){
