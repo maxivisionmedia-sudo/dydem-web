@@ -1241,6 +1241,11 @@ $('modal-fields').addEventListener('click',async e=>{
  if(!t||!confirm('¿Quitar este anexo de la actividad?'))return;
  button.disabled=true;
  try{
+  // Never overwrite unsaved Proposal description or other activity edits.
+  if(isDirty()){
+   await save();
+   if(isDirty())throw Error('Guarda los cambios pendientes antes de quitar archivos.');
+  }
   const {data,error}=await cloud.rpc(section==='proposal'?'remove_proposal_file':'remove_activity_file',{p_activity_id:Number(t.id),p_file_id:fileId});
   if(error)throw error;
   if(!data?.data)throw Error('No se confirmó la eliminación');
