@@ -725,7 +725,7 @@ async function loadResponsibleUsers(){
 }
 function canApproveStage(t,i){
  return isSignedIn()&&approvalStageKey(i)!==null&&
-  (stagePeople(t,i).includes(currentAccount?.id)||(isAdmin()&&stagePeople(t,i).length===0));
+  (stagePeople(t,i).includes(currentAccount?.id)||(isAdmin()&&i!==2&&stagePeople(t,i).length===0));
 }
 function canAddReviewFile(t){return !!t&&isSignedIn()&&(isAdmin()||
  (!!t.steps?.[0]&&!t.steps?.[1]&&(stagePeople(t,1).includes(currentAccount.id)||canAddDocument())))}
@@ -756,7 +756,7 @@ function approvalStageSummary(t,i,editable=false){
  const namesList=(ids,empty)=>ids.length?
   `<ul class="approval-compact-names">${ids.map(id=>`<li>${esc(responsibleName(id))}</li>`).join('')}</ul>`:
   `<span class="approval-compact-empty">${empty}</span>`;
- const myVote=canApproveStage(t,i),manual=isAdmin()&&responsible.length===0;
+ const myVote=canApproveStage(t,i),manual=isAdmin()&&i!==2&&responsible.length===0;
  const prevReady=isApprovalReady(t,i);
  const mine=manual?!!t.manualApprovals?.[approvalStageKey(i)]:approved.has(currentAccount?.id);
  const locked=!!t.steps[i]&&!isAdmin();
@@ -764,7 +764,7 @@ function approvalStageSummary(t,i,editable=false){
  <span>${manual?(mine?'Aprobación administrativa registrada':'Aprobar etapa como Administrador'):locked?'Etapa finalizada · confirmación bloqueada':mine?'He aprobado esta etapa':'Confirmar mi aprobación'}</span></label>`:'';
  const config=isAdmin()?`<button type="button" class="btn secondary approval-config" data-edit="${i}" data-id="${t.id}">Asignar responsables</button>`:'';
  return `<div class="approval-compact">
-  <div class="approval-compact-line"><b>Pendientes:</b>${namesList(pending,responsible.length?'Ninguno':'Sin responsables asignados')}</div>
+  <div class="approval-compact-line"><b>Pendientes:</b>${namesList(pending,responsible.length?'Ninguno':i===2?'Asignación obligatoria: selecciona al menos un responsable':'Sin responsables asignados')}</div>
   <div class="approval-compact-line"><b>Confirmaron:</b>${namesList(confirmed,'Ninguno')}</div>
   ${manual&&mine?'<small class="muted">Confirmada por el Administrador (sin responsables).</small>':''}
   ${vote||config?`<div class="approval-compact-actions">${vote}${config}</div>`:''}
@@ -1237,7 +1237,7 @@ async function editStep(t,i){
   const options=eligible.map(u=>`<label class="approval-choice"><input type="checkbox" name="responsible" value="${esc(u.id)}" ${chosen.has(u.id)?'checked':''}><span>${esc(u.display_name)}</span></label>`).join('');
   const fields=`<fieldset class="responsible-chooser"><legend>Usuarios Responsables</legend>
    ${options||'<p>No hay usuarios activos disponibles.</p>'}
-   </fieldset><p class="muted">La etapa necesitará la aprobación individual de todos los seleccionados. Cambiar la asignación reiniciará las aprobaciones anteriores de esta etapa.</p>`;
+   </fieldset><p class="muted">${i===2?'<strong>Obligatorio:</strong> en Autorizado debes asignar por lo menos un usuario responsable. No existe aprobación administrativa sin responsables. ':'La asignación de responsables es opcional en esta etapa. '}Cada responsable asignado deberá confirmar. Cambiar los responsables reiniciará las aprobaciones anteriores.</p>`;
   modal(`${names[i]} · Actividad ${t.annex}`,'Puedes asignar a cualquier usuario activo de DYDEM. Solo los responsables asignados podrán aprobar usando su propia cuenta.',fields,{type:'assign',id:t.id,step:i});
   return;
  }
@@ -1583,6 +1583,8 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
  if(active.type==='assign'){
   if(!isAdmin())throw Error('Solo el Administrador puede asignar responsables.');
   const selected=[...$('modal-fields').querySelectorAll('input[name="responsible"]:checked')].map(n=>n.value);
+  if(Number(active.step)===2&&selected.length===0)
+   throw Error('Autorizado requiere al menos un usuario responsable. Selecciona uno antes de guardar.');
   if(isDirty()){
    await save();if(isDirty())throw Error('Primero guarda los cambios pendientes de actividades.');
   }
