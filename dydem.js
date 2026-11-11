@@ -6,7 +6,7 @@ function storeGet(key){try{return localStorage.getItem(key)}catch(e){return fall
 function storeSet(key,value){fallbackStorage.set(key,value);try{localStorage.setItem(key,value);return true}catch(e){return false}}
 function weekInfo(date=new Date()){const d=new Date(Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()));d.setUTCDate(d.getUTCDate()-(d.getUTCDay()||7)+1);const start=new Date(d),end=new Date(d);end.setUTCDate(end.getUTCDate()+6);const th=new Date(d);th.setUTCDate(th.getUTCDate()+3);const year=th.getUTCFullYear(),jan4=new Date(Date.UTC(year,0,4));jan4.setUTCDate(jan4.getUTCDate()-(jan4.getUTCDay()||7)+1);const week=1+Math.round((d-jan4)/604800000),iso=x=>x.toISOString().slice(0,10);return {year,week,start:iso(start),end:iso(end),code:`${year}-S${String(week).padStart(2,'0')}`}}
 function assignAnnexes(){const counts={};tasks.forEach(t=>{if(!t.weekCode){t.weekCode='2026-S43';t.weekNumber=43;t.weekStart='2026-10-19';t.weekEnd='2026-10-25'}const wk=t.weekNumber||43;if(!t.annex){counts[t.weekCode]=(counts[t.weekCode]||0)+1;t.annex=`${wk}_${counts[t.weekCode]}`}else counts[t.weekCode]=Math.max(counts[t.weekCode]||0,Number(t.annex.split('_')[1])||0)})}
-const fresh=t=>({...t,start:'',end:'',before:'',after:'',reviewers:'',reviewAnnex:'',authorizer:'',progress:0,evidenceProgress:0,verification:0,attachments:[],completedDate:'',workCompletedDate:'',responsibles:{review:[],authorization:[],verification:[]},approvals:{review:[],authorization:[],verification:[]},steps:[false,false,false,false,false,false,false]});
+const fresh=t=>({...t,start:'',end:'',before:'',after:'',reviewers:'',reviewAnnex:'',authorizer:'',progress:0,evidenceProgress:0,verification:0,attachments:[],proposalAttachments:[],proposalDescription:'',completedDate:'',workCompletedDate:'',responsibles:{review:[],authorization:[],verification:[]},approvals:{review:[],authorization:[],verification:[]},steps:[false,false,false,false,false,false,false]});
 function migrate(t){
  const n=fresh({id:t.id,title:t.title});
  const keys=['review','authorization','verification'],responsibles={},approvals={};
@@ -16,6 +16,8 @@ function migrate(t){
  }
  return {...n,...t,steps:Array.isArray(t.steps)?t.steps.slice(0,7):n.steps,
   attachments:Array.isArray(t.attachments)?t.attachments:[],
+  proposalAttachments:Array.isArray(t.proposalAttachments)?t.proposalAttachments:[],
+  proposalDescription:typeof t.proposalDescription==='string'?t.proposalDescription:'',
   progress:Math.max(0,Math.min(100,Number(t.progress)||0)),
   evidenceProgress:Math.max(0,Math.min(100,Number(t.evidenceProgress)||0)),
   verification:0,workCompletedDate:t.workCompletedDate||'',responsibles,approvals};
@@ -81,7 +83,7 @@ function canEditAnyStep(){return names.some((_,i)=>canEditStep(i))}
 function canAddActivity(){return isAdmin()||(isCustom()&&accountPermissions().add===true)}
 function canDeleteActivity(){return isAdmin()||(isCustom()&&accountPermissions().delete===true)}
 function canPostComment(){return isAdmin()||(isCustom()&&accountPermissions().comment===true)}
-function stageForField(f){return (['title','start','end','before','after'].includes(f))?0:f==='progress'||f==='workCompletedDate'?3:f==='evidenceProgress'?5:f==='completedDate'?6:-1}
+function stageForField(f){return (['title','start','end','before','after','proposalDescription'].includes(f))?0:f==='progress'||f==='workCompletedDate'?3:f==='evidenceProgress'?5:f==='completedDate'?6:-1}
 function permissionChooser(prefix,p){
  const perms=p&&Array.isArray(p.steps)?p:emptyPermissions();
  const documentado=`<fieldset class="permission-documentado"><legend>6. Evidencia</legend>
@@ -605,13 +607,20 @@ function viewerAttachmentLinks(t){
  const pending=pendingForActivity(t.id).map(a=>`<span class="pending-attachment-label" title="Se verificará automáticamente al recuperar la conexión">⏳ ${esc(a.file_name)} (pendiente)</span>`).join(' ');
  return (saved+' '+pending).trim()||'<span class="muted">Sin anexos adjuntos</span>';
 }
+
+function viewerProposalLinks(t){
+ const saved=(Array.isArray(t.proposalAttachments)?t.proposalAttachments:[]).map(a=>attachmentActions(t,a)).join(' ');
+ const pending=pendingForActivity(t.id,'proposal').map(a=>
+  `<span class="pending-attachment-label">⏳ ${esc(a.file_name)} (pendiente)</span>`).join(' ');
+ return (saved+' '+pending).trim()||'<span class="muted">Sin archivos de Propuesta</span>';
+}
 function viewerCard(t){
  const state=status(t),stateClass=state==='Por empezar'?'status-pending':state==='Terminado'?'status-finished':'status-active';
  const collapsed=collapsedActivities.has(String(t.id));
  const stageOpen=sectionIsOpen(t.id,'stages')?' open':'';
  const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
 
- const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}${dudasSection(t)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span><strong>Progreso de Evidencia: ${evidencePct(t)}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}</span></div><div class="viewer-progress"><div style="width:${evidencePct(t)}%"></div></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
+ const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step proposal-view"><b>Descripción (opcional):</b><span class="proposal-description-text">${esc(t.proposalDescription||'Sin descripción')}</span></div><div class="viewer-step proposal-view"><b>Archivos de Propuesta (opcionales):</b><span>${viewerProposalLinks(t)}</span></div><div class="viewer-step"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}${dudasSection(t)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span><strong>Progreso de Evidencia: ${evidencePct(t)}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}</span></div><div class="viewer-progress"><div style="width:${evidencePct(t)}%"></div></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
  return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`;
 }
 function isMobileTimeline(){return typeof window!=='undefined' && window.matchMedia('(max-width: 760px)').matches}
@@ -740,7 +749,9 @@ function hybridReadOnlyStage(t,i){
  if(i===0){
   content=`${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}
    <small>Debe completarse antes: ${esc(viewerLinkedActivity(t.before))}</small>
-   <small>Solo después de: ${esc(viewerLinkedActivity(t.after))}</small>`;
+   <small>Solo después de: ${esc(viewerLinkedActivity(t.after))}</small>
+   <span class="proposal-description-text"><b>Descripción (opcional):</b> ${esc(t.proposalDescription||'Sin descripción')}</span>
+   <span class="proposal-file-display"><b>Archivos de Propuesta:</b> ${viewerProposalLinks(t)}</span>`;
  }else if(i===3){
   const value=pct(t.progress);
   content=`<strong>${value}%</strong>${i===3?`<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small>`:''}`;
@@ -761,6 +772,9 @@ function hybridReadOnlyStage(t,i){
 function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{
  if(approvalStageKey(i)!==null&&!isAdmin())return `<div class="viewer-step approval-stage-readonly"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}${i===1?dudasSection(t):''}</div></div>`;
  if(isCustom()&&!canEditStep(i))return hybridReadOnlyStage(t,i);const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
+if(i===0)detail+=`<div class="field proposal-optional-section"><label for="proposal-description-${t.id}">Descripción (opcional)</label><textarea id="proposal-description-${t.id}" data-id="${t.id}" data-field="proposalDescription" rows="3" maxlength="10000" placeholder="Descripción adicional de la propuesta (opcional)" ${canEdit?'':'disabled'}>${esc(t.proposalDescription||'')}</textarea></div>
+ <div class="proposal-files"><b>Archivos de Propuesta (opcionales)</b><div class="detail">${viewerProposalLinks(t)}</div>
+ ${canEdit?`<button type="button" class="btn secondary" data-edit="0" data-id="${t.id}">Gestionar Archivos</button>`:''}</div>`;
 if(i===3){const v=t.progress;detail=`<div class="row" style="margin-top:6px"><span class="muted">Avance de obra</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="progress" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
 if(i===5){
  const value=evidencePct(t);
@@ -1012,6 +1026,10 @@ document.addEventListener('toggle',event=>{
 $('board').addEventListener('input',event=>{
  const el=event.target;
  if(el.matches('textarea[data-comment-input]'))commentDrafts.set((el.dataset.commentThread||'notes')+':'+Number(el.dataset.commentInput),el.value);
+ if(el.matches('textarea[data-field="proposalDescription"]')&&isAdmin()){
+  const t=task(el.dataset.id);
+  if(t)t.proposalDescription=el.value.slice(0,10000);
+ }
 });
 $('board').addEventListener('click',async event=>{
  const button=event.target.closest('button[data-delete-comment]');
@@ -1269,6 +1287,8 @@ function pdf(){
   ${tr('Actividad posterior',t.after?task(t.after)?.annex||t.after:'Ninguna')}
   ${tr('Revisión · Usuarios Responsables',approvalText(t,1))}
   ${tr('Autorización · Usuarios Responsables',approvalText(t,2))}
+  ${tr('Descripción de Propuesta',t.proposalDescription||'Sin descripción')}
+  ${tr('Archivos de Propuesta',t.proposalAttachments.length?t.proposalAttachments.map(a=>a.name).join(', '):'Sin archivos')}
   ${tr('Avance de Obra',t.progress+' %')}${tr('Fecha real de término de obra',t.workCompletedDate||'Sin fecha')}
   ${tr('Verificación · Usuarios Responsables',approvalText(t,4))}
   ${tr('Progreso de Evidencia',evidencePct(t)+' %')}${tr('Evidencia obligatoria',t.attachments.length?t.attachments.map(a=>a.name).join(', '):'Pendiente')}
