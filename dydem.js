@@ -50,13 +50,61 @@ let lastSynced=new Map(),revisions=new Map(),saveBusy=false,savePending=false,re
 const RECOVERY_PENDING_KEY='dydem-recovery-pending-v1';
 const authHashParams=new URLSearchParams(location.hash.replace(/^#/,''));
 const authSearchParams=new URLSearchParams(location.search);
-let inviteMode=authHashParams.has('invite');
+// General / addressed registration: #invite carries one nonreusable bearer token.
+// Email invitations instead rely on the Supabase Auth email-verification link.
 let inviteToken=String(authHashParams.get('invite')||'');
-let inviteKind=authHashParams.get('kind')==='magiclink'?'magiclink':'invite';
-let inviteOtpVerified=false;
-async function inviteSha256(value){
- const output=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));
- return Array.from(new Uint8Array(output),n=>n.toString(16).padStart(2,'0')).join('');
+let inviteMode=!!inviteToken||
+ authHashParams.get('type')==='invite'||authSearchParams.get('type')==='invite'||
+ authSearchParams.get('registration')==='email';
+let emailInviteMode=inviteMode&&!inviteToken;
+let invitationEmail='',invitationLoaded=false;
+function setInvitationEmail(email,fixed){
+ invitationEmail=fixed?String(email||'').trim().toLowerCase():'';
+ $('invite-registration-email-wrap').hidden=!!fixed;
+ $('invite-fixed-email').hidden=!fixed;
+ $('invite-fixed-email').textContent=fixed?'Correo de la invitación: '+invitationEmail:'';
+ $('invite-registration-email').required=!fixed;
+ $('invite-registration-email').value=fixed?invitationEmail:'';
+}
+async function prepareInvitationForm(){
+ showInvitationForm();
+ const feedback=$('invite-activation-feedback'),submit=$('invite-activation-submit');
+ submit.disabled=true;feedback.textContent='Verificando el enlace de registro…';
+ try{
+  if(!emailInviteMode){
+   const {data,error}=await cloud.functions.invoke('register-invitation',{
+    body:{action:'inspect',token:inviteToken}
+   });
+   if(error)throw Error(await edgeErrorMessage(error));
+   if(data?.error||!data?.ok)throw Error(data?.error||'No se pudo validar el enlace.');
+   setInvitationEmail(data.email||'',!!data.email_fixed);
+   $('invite-registration-description').textContent=data.email_fixed
+    ?'Tu correo ya está establecido por el Administrador. Elige tu nombre y contraseña para completar el registro.'
+    :'Escribe tu correo, elige tu nombre y crea una contraseña. El enlace solo permite registrar una cuenta.';
+  }else{
+   let {data:{session},error:sessionError}=await cloud.auth.getSession();
+   if(sessionError)throw sessionError;
+   const hash=authHashParams.get('token_hash')||authSearchParams.get('token_hash');
+   if(!session&&hash){
+    const {data,error}=await cloud.auth.verifyOtp({token_hash:hash,type:'invite'});
+    if(error)throw error;
+    session=data?.session;
+   }
+   if(!session?.user?.id)throw Error('Primero abre el enlace de correo más reciente enviado por Supabase.');
+   const {data:profile,error}=await cloud.from('profiles')
+    .select('email,active,invite_pending').eq('id',session.user.id).maybeSingle();
+   if(error||!profile||profile.active||!profile.invite_pending)
+    throw Error('La invitación por correo no está pendiente o ya fue utilizada.');
+   setInvitationEmail(profile.email,true);
+   $('invite-registration-description').textContent=
+    'Supabase verificó tu correo. Elige tu nombre de usuario y tu contraseña para terminar el registro.';
+  }
+  invitationLoaded=true;
+  feedback.textContent='';
+  submit.disabled=false;
+ }catch(err){
+  invitationLoaded=false;feedback.textContent='No se puede completar el registro: '+messageError(err);
+ }
 }
 let recoverMode=authHashParams.get('type')==='recovery'||authSearchParams.get('type')==='recovery'||
   (storeGet(RECOVERY_PENDING_KEY)==='1'&&(authHashParams.has('access_token')||authSearchParams.has('code')));
@@ -68,8 +116,8 @@ function showRecoveryForm(){
  $('otp-container').hidden=true;$('reset-container').hidden=false;$('invite-activation').hidden=true;$('access-gate').hidden=false;
 }
 function showInvitationForm(){
- $('access-title').textContent='Invitación verificada a DYDEM';
- $('access-help').textContent='Para activar tu acceso necesitas el enlace del Administrador y el código recibido por separado.';
+ $('access-title').textContent='Registro por invitación a DYDEM';
+ $('access-help').textContent='Solo puedes registrarte utilizando un enlace emitido por el Administrador.';
  $('access-form').hidden=true;
  $('recover-password').hidden=true;
  $('use-recovery-code').hidden=true;
@@ -77,10 +125,8 @@ function showInvitationForm(){
  $('reset-container').hidden=true;
  $('invite-activation').hidden=false;
  $('access-gate').hidden=false;
- if(!inviteToken||inviteToken.length<16){
-  $('invite-activation-feedback').textContent='El enlace de invitación está incompleto o no fue emitido por el Administrador.';
-  $('invite-activation-submit').disabled=true;
- }
+ $('invite-activation-feedback').textContent='';
+ $('invite-activation-submit').disabled=true;
 }
 function showLoginForm(message=''){
  recoverMode=false;
@@ -175,7 +221,6 @@ async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refresh
  if($('generated-invitation')){
   $('generated-invitation').hidden=true;
   $('generated-invitation-link').value='';
-  $('generated-invitation-code').value='';
  }
  $('access-pass').value='';render();syncState('Sin sesión')}
 function isDirty(){return tasks.some(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)))}
@@ -207,56 +252,48 @@ async function save(){if(!canEditAnyStep())return;savePending=true;if(saveBusy)r
 $('invite-activation').addEventListener('submit',async e=>{
  e.preventDefault();
  const submit=$('invite-activation-submit'),feedback=$('invite-activation-feedback');
- if(!cloud||!inviteMode||!inviteToken)return;
- const code=$('invite-activation-code').value.trim().toUpperCase().replace(/\s+/g,'');
+ if(!cloud||!inviteMode||!invitationLoaded)return;
+ const name=$('invite-display-name').value.trim();
+ const email=invitationEmail||$('invite-registration-email').value.trim().toLowerCase();
  const password=$('invite-activation-password').value;
  const confirmation=$('invite-activation-confirm').value;
- if(!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{12}$/.test(code)){
-  feedback.textContent='El código de activación debe tener 12 caracteres válidos.';return;
+ if(name.length<2||name.length>120){
+  feedback.textContent='Elige un nombre de usuario de 2 a 120 caracteres.';return;
  }
- if(password.length<12||password!==confirmation){
-  feedback.textContent='La contraseña debe tener al menos 12 caracteres y coincidir en ambos campos.';return;
+ if(password.length<12||password.length>128||password!==confirmation){
+  feedback.textContent='La contraseña debe tener entre 12 y 128 caracteres y coincidir en ambos campos.';return;
  }
- submit.disabled=true;
- feedback.textContent='Verificando la invitación…';
+ if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+  feedback.textContent='Escribe un correo electrónico válido.';return;
+ }
+ submit.disabled=true;feedback.textContent='Registrando tu cuenta…';
  try{
-  if(!inviteOtpVerified){
+  if(emailInviteMode){
    const {data:{session}}=await cloud.auth.getSession();
-   if(session?.user){
-    const {data:canResume,error:resumeError}=await cloud.rpc('dydem_resume_invitation',{
-     p_token_digest:await inviteSha256(inviteToken)
-    });
-    if(!resumeError&&canResume===true)inviteOtpVerified=true;
-   }
-   if(!inviteOtpVerified){
-    const {data,error}=await cloud.auth.verifyOtp({token_hash:inviteToken,type:inviteKind});
-    if(error)throw Error('El enlace no fue validado por Supabase: '+messageError(error));
-    if(!data?.user?.id)throw Error('No se pudo autenticar a la persona invitada.');
-    inviteOtpVerified=true;
-   }
+   if(!session?.user?.id||session.user.email?.toLowerCase()!==email)
+    throw Error('La sesión no corresponde al correo invitado.');
+   const change=await cloud.auth.updateUser({password,data:{display_name:name}});
+   if(change.error)throw change.error;
+   const {data,error}=await cloud.rpc('dydem_complete_email_invitation',{p_display_name:name});
+   if(error)throw error;
+   if(!data?.ok)throw Error('El servidor no confirmó el registro.');
+  }else{
+   const {data,error}=await cloud.functions.invoke('register-invitation',{
+    body:{action:'register',token:inviteToken,name,email,password}
+   });
+   if(error)throw Error(await edgeErrorMessage(error));
+   if(data?.error||!data?.ok)throw Error(data?.error||'El registro no fue autorizado.');
+   const login=await cloud.auth.signInWithPassword({email,password});
+   if(login.error)throw Error('Tu cuenta se creó correctamente. Inicia sesión manualmente con tu correo y contraseña: '+messageError(login.error));
   }
-  // Password changes alone never enable DYDEM: server checks the stored invite
-  // token, independent activation code, recipient identity, expiry and one use.
-  feedback.textContent='Protegiendo la cuenta y verificando el código…';
-  const update=await cloud.auth.updateUser({password});
-  if(update.error)throw update.error;
-  const {data:accepted,error:activationError}=await cloud.rpc('dydem_accept_invitation',{
-   p_token_digest:await inviteSha256(inviteToken),
-   p_code_digest:await inviteSha256(code)
-  });
-  if(activationError)throw activationError;
-  if(!accepted?.ok)throw Error(accepted?.error||'La invitación no fue autorizada.');
-  inviteMode=false;inviteToken='';inviteOtpVerified=false;
-  history.replaceState(null,'',location.pathname+location.search);
-  $('invite-activation').hidden=true;
-  $('invite-activation-code').value='';
-  $('invite-activation-password').value='';
-  $('invite-activation-confirm').value='';
+  inviteMode=false;inviteToken='';emailInviteMode=false;invitationLoaded=false;
+  history.replaceState(null,'',location.pathname+location.search.replace(/[?&]registration=email\b/,''));
+  $('invite-activation').reset();$('invite-activation').hidden=true;
   feedback.textContent='';
   await loadAccount();
-  syncState('Cuenta verificada y activada');
+  syncState('Registro completado. Bienvenido a DYDEM');
  }catch(err){
-  feedback.textContent='No se pudo activar: '+messageError(err);
+  feedback.textContent='No se pudo completar el registro: '+messageError(err);
  }finally{submit.disabled=false}
 });
 $('access-form').addEventListener('submit',async e=>{e.preventDefault();if(!cloud)return;const btn=$('access-submit');btn.disabled=true;$('access-error').textContent='';try{const {error}=await cloud.auth.signInWithPassword({email:$('access-user').value.trim(),password:$('access-pass').value});if(error)throw error;await loadAccount()}catch(err){$('access-error').textContent='No se pudo iniciar sesión: '+messageError(err)}finally{btn.disabled=false;$('access-pass').value=''}});
@@ -592,8 +629,8 @@ async function initializeOnline(){
  });
  try{
   if(inviteMode){
-   showInvitationForm();
-   syncState('Invitación pendiente de verificación');
+   await prepareInvitationForm();
+   syncState(invitationLoaded?'Completa tu registro por invitación':'Enlace de invitación no disponible',!invitationLoaded);
    return;
   }
   await loadAccount();
