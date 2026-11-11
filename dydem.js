@@ -1159,7 +1159,7 @@ $('board').addEventListener('change',e=>{
  }else return;
  save();render();
 });
-$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='files'&&canAddDocument()))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=active.type==='files';let form=new FormData(e.target);let err='';try{
+$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='files'&&canAddDocument()))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=['files','proposal-files'].includes(active.type);let form=new FormData(e.target);let err='';try{
  if(active.type==='assign'){
   if(!isAdmin())throw Error('Solo el Administrador puede asignar responsables.');
   const selected=[...$('modal-fields').querySelectorAll('input[name="responsible"]:checked')].map(n=>n.value);
@@ -1174,7 +1174,9 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
   close();
   return;
  }
- if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(active.type==='files'){
+ if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(['files','proposal-files'].includes(active.type)){
+ const section=active.type==='proposal-files'?'proposal':'evidence';
+ if(section==='proposal'&&!isAdmin())throw Error('Solo el Administrador puede gestionar archivos de Propuesta.');
  let t=task(active.id);
  const files=Array.from($('attachments-input').files);
  for(const file of files){
@@ -1190,10 +1192,10 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
   const current=task(active.id)||t;
   const state=$('attachment-upload-status');
   // 1. Create a durable intent BEFORE uploading any bytes.
-  const intent=await prepareAttachmentUpload(current,file);
+  const intent=await prepareAttachmentUpload(current,file,section);
   if(state)state.textContent='Verificando carga anterior: '+file.name;
   // A verification failure must NOT cause re-upload of an already-stored file.
-  const prior=await cloud.rpc('complete_activity_upload',{p_upload_id:intent.id});
+  const prior=await cloud.rpc(section==='proposal'?'complete_proposal_upload':'complete_activity_upload',{p_upload_id:intent.id});
   if(prior.error)throw Error('No se pudo consultar la carga anterior. El archivo está registrado como pendiente: '+messageError(prior.error));
   const complete=prior.data;
   if(!complete||!['linked','pending'].includes(complete.status))throw Error('Estado de carga desconocido. No se enviará el archivo otra vez.');
@@ -1205,9 +1207,9 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
   // 3. Register and verify the reference BEFORE telling the user it is saved.
   if(state)state.textContent='Guardando y verificando referencia: '+file.name;
   try{
-   await confirmUploadedAttachment(task(active.id)||current,intent);
+   await confirmUploadedAttachment(task(active.id)||current,intent,section);
   }catch(error){
-   throw Error('La carga quedó pendiente en Supabase y NO se perderá. Abre nuevamente Documentado para recuperarla o pulsa «Comprobar». '+messageError(error));
+   throw Error('La carga quedó pendiente en Supabase y NO se perderá. Reabre la sección de '+(section==='proposal'?'Propuesta':'Evidencia')+' o pulsa «Comprobar». '+messageError(error));
   }
   if(state)state.textContent='Archivo registrado y verificado: '+file.name;
  }
@@ -1215,10 +1217,11 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
 $('modal-fields').addEventListener('click',async e=>{
  const recovery=e.target.closest('button[data-recover-upload]');
  if(recovery){
-  if(!canAddDocument())return;
+  const section=active?.type==='proposal-files'?'proposal':'evidence';
+  if(section==='proposal'?!isAdmin():!canAddDocument())return;
   recovery.disabled=true;
   try{
-   const {data,error}=await cloud.rpc('complete_activity_upload',{p_upload_id:recovery.dataset.recoverUpload});
+   const {data,error}=await cloud.rpc(section==='proposal'?'complete_proposal_upload':'complete_activity_upload',{p_upload_id:recovery.dataset.recoverUpload});
    if(error)throw error;
    if(data?.status==='linked'){
     forgetPendingIntent(recovery.dataset.recoverUpload,recovery.dataset.id);
@@ -1226,23 +1229,24 @@ $('modal-fields').addEventListener('click',async e=>{
     $('modal-error').textContent='Anexo recuperado correctamente.';
    }else $('modal-error').textContent='El archivo todavía no está completo en Storage. Selecciónalo nuevamente para continuar la carga.';
    const current=task(recovery.dataset.id);
-   if(current)$('attachment-list').innerHTML=attachmentList(current);
+   if(current)$('attachment-list').innerHTML=attachmentList(current,section);
   }catch(err){$('modal-error').textContent='No se pudo recuperar: '+messageError(err)}
   finally{recovery.disabled=false}
   return;
  }
  const button=e.target.closest('button[data-remove-file]');
- if(!button||!canDeleteDocument()||attachmentUploadBusy)return;
+ const section=active?.type==='proposal-files'?'proposal':'evidence';
+ if(!button||(section==='proposal'?!isAdmin():!canDeleteDocument())||attachmentUploadBusy)return;
  const t=task(button.dataset.id),fileId=button.dataset.removeFile;
  if(!t||!confirm('¿Quitar este anexo de la actividad?'))return;
  button.disabled=true;
  try{
-  const {data,error}=await cloud.rpc('remove_activity_file',{p_activity_id:Number(t.id),p_file_id:fileId});
+  const {data,error}=await cloud.rpc(section==='proposal'?'remove_proposal_file':'remove_activity_file',{p_activity_id:Number(t.id),p_file_id:fileId});
   if(error)throw error;
   if(!data?.data)throw Error('No se confirmó la eliminación');
   applyAttachmentServerData(t.id,data.data,data.revision);
   if(data.removed_file?.path){
-   try{await deleteFile(data.removed_file)}
+   try{await deleteFile(data.removed_file,section)}
    catch(error){alert('Se quitó la referencia, pero el archivo aún debe eliminarse de Storage: '+messageError(error))}
   }
   $('modal-error').textContent='Anexo eliminado correctamente.';
