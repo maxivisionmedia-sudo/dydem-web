@@ -45,12 +45,35 @@ serve(async (req:Request)=>{
   const {data:profile,error:profileError}=await admin.from("profiles").select("role,active").eq("id",user.id).single();
   if(profileError||!profile?.active||profile.role!=="admin")return respond(403,{error:"Solo administradores"});
   const input=await req.json();
+  if(input.action==="remove-user"){
+   const id=String(input.user_id||"");
+   if(!/^[0-9a-f-]{36}$/i.test(id))return respond(400,{error:"Selecciona un usuario válido."});
+   if(id===user.id)return respond(400,{error:"No puedes eliminar tu propia cuenta administradora."});
+   // Use the requesting administrator's JWT for all SQL checks. A service
+   // role token must never bypass the pending approvals and last-admin guard.
+   const scoped=createClient(url,anon,{
+     auth:{persistSession:false,autoRefreshToken:false},
+     global:{headers:{Authorization:"Bearer "+token}}
+   });
+   const {data:marked,error:markError}=await scoped.rpc("dydem_remove_user",{p_user_id:id});
+   if(markError||!marked?.ok){
+     return respond(409,{error:markError?.message||"La cuenta no cumple las condiciones para eliminarla. Reasigna sus aprobaciones pendientes."});
+   }
+   // SQL has already archived the historical display name, revoked links and
+   // transferred Storage ownership. This is a REAL Auth deletion (not soft).
+   const {error:deleteError}=await admin.auth.admin.deleteUser(id,false);
+   if(deleteError){
+     return respond(502,{code:"AUTH_DELETE_PENDING",
+       error:"DYDEM desactivó la cuenta, pero Supabase no completó la eliminación del correo. Vuelve a pulsar «Remover usuario» para terminarla. Detalle: "+deleteError.message});
+   }
+   return respond(200,{ok:true,deleted_from_auth:true,email_released:true,
+     history_preserved:true});
+  }
   if(input.action==="create-copy-link" || input.action==="renew-copy-link"){
    const renewing=input.action==="renew-copy-link";
    let email="",display="",role="viewer";
    let permissions=emptyPermissions();
    let pendingId="";
-   let reusingRemovedAccount=false;
    if(renewing){
      pendingId=String(input.user_id||"");
      if(!/^[0-9a-f-]{36}$/i.test(pendingId))return respond(400,{error:"Usuario de invitación inválido."});
@@ -77,67 +100,39 @@ serve(async (req:Request)=>{
      const {data:profiles,error:profilesError}=await admin.from("profiles")
        .select("id,email,active,invite_pending,removed_at");
      if(profilesError)return respond(500,{error:"No se pudo verificar el directorio."});
-     const existing=(profiles||[]).find(p=>String(p.email||"").trim().toLowerCase()===email);
-     // Removed identities stay in Auth for historical approvals/comments.
-     // They are NOT active users; the administrator may re-invite their email.
-     if(existing){
-       if(!existing.removed_at||existing.active||existing.invite_pending)
-         return respond(409,{error:existing.invite_pending
-           ?"Este correo tiene una invitación pendiente. Usa «Regenerar enlace» en la lista de usuarios."
-           :"Este correo ya pertenece a un usuario de DYDEM. No se creará una cuenta duplicada."});
-       reusingRemovedAccount=true;
-       pendingId=String(existing.id);
-     }
+     if((profiles||[]).some(p=>String(p.email).trim().toLowerCase()===email))
+       return respond(409,{error:"Este correo ya está registrado. Si su invitación está pendiente, usa «Regenerar enlace»."});
      if((profiles||[]).filter(p=>!p.removed_at&&(p.active||p.invite_pending)).length>=5)
        return respond(409,{error:"Se alcanzó el límite de cinco usuarios activos o invitados."});
+     // Detect accounts without a profile; never claim an existing auth identity.
      const {data:authListing,error:listError}=await admin.auth.admin.listUsers({page:1,perPage:1000});
-     if(listError)return respond(503,{error:"No se pudo verificar el directorio de autenticación."});
-     const match=(authListing?.users||[]).find(u=>String(u.email||"").trim().toLowerCase()===email);
-     if(reusingRemovedAccount){
-       // Historical data must retain the original account UUID.
-       if(!match||match.id!==pendingId)
-         return respond(409,{error:"El usuario removido necesita revisión: su identidad histórica no coincide con Supabase Auth."});
-     }else if(match){
-       return respond(409,{error:"El correo ya tiene una cuenta de Supabase distinta de las cuentas removidas de DYDEM."});
-     }
+     if(listError)return respond(503,{error:"No se pudo verificar que el correo sea nuevo."});
+     if((authListing?.users||[]).some(u=>String(u.email||"").toLowerCase()===email))
+       return respond(409,{error:"Este correo ya existe en la autenticación de Supabase. Revisa su cuenta antes de invitarlo."});
    }
-   const authType=renewing||reusingRemovedAccount?"magiclink":"invite";
+   const authType=renewing?"magiclink":"invite";
    const {data:generated,error:generateError}=await admin.auth.admin.generateLink({
      type:authType,email,options:{data:{display_name:display},redirectTo:defaultSite}
    });
    if(generateError||!generated?.user?.id||!generated.properties?.hashed_token)
      return respond(400,{error:"No se pudo generar un enlace firmado: "+(generateError?.message||"Respuesta incompleta de Supabase Auth")});
    const authId=generated.user.id;
-   if((renewing||reusingRemovedAccount)&&authId!==pendingId)
-     return respond(409,{error:"La autenticación no coincide con la identidad histórica del usuario invitado."});
+   if(renewing&&authId!==pendingId)
+     return respond(409,{error:"La autenticación no coincide con el usuario invitado."});
    const token=String(generated.properties.hashed_token);
    if(token.length<16||token.length>512)
      return respond(500,{error:"Supabase devolvió un formato de invitación inesperado."});
-   if(reusingRemovedAccount||renewing){
+   if(!renewing){
+     const {error:profileError}=await admin.from("profiles").upsert({
+       id:authId,email,display_name:display,role,permissions,
+       active:false,invite_pending:true,approval_reminders_enabled:false
+     },{onConflict:"id"});
+     if(profileError)return respond(500,{error:"Se generó el enlace, pero no se pudo registrar el usuario. No se entregó el enlace."});
+   }else{
      const {error:revokeError}=await admin.from("dydem_invitation_links")
        .update({revoked_at:new Date().toISOString()})
        .eq("invited_user",authId).is("accepted_at",null).is("revoked_at",null);
      if(revokeError)return respond(500,{error:"No se pudo revocar la invitación anterior."});
-   }
-   if(!renewing){
-     if(reusingRemovedAccount){
-       // Never resurrect old credentials or grant access here: the account
-       // stays inactive until Auth verifies the new link AND activation PIN.
-       const {data:restored,error:restoreError}=await admin.from("profiles")
-         .update({display_name:display,role,permissions,
-           active:false,invite_pending:true,removed_at:null,
-           approval_reminders_enabled:false})
-         .eq("id",authId).eq("active",false).not("removed_at","is",null)
-         .select("id").single();
-       if(restoreError||restored?.id!==authId)
-         return respond(500,{error:"No se pudo preparar la nueva invitación para el usuario removido."});
-     }else{
-       const {error:profileError}=await admin.from("profiles").upsert({
-         id:authId,email,display_name:display,role,permissions,
-         active:false,invite_pending:true,approval_reminders_enabled:false
-       },{onConflict:"id"});
-       if(profileError)return respond(500,{error:"Se generó el enlace, pero no se pudo registrar el usuario. No se entregó el enlace."});
-     }
    }
    const alphabet="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
    const secretBytes=crypto.getRandomValues(new Uint8Array(12));
@@ -150,7 +145,7 @@ serve(async (req:Request)=>{
    if(saveError)return respond(500,{error:"No se pudo registrar la verificación del enlace. No se entregó ningún enlace."});
    const inviteUrl=defaultSite+"#invite="+encodeURIComponent(token)+"&kind="+authType;
    return respond(200,{ok:true,method:"copy-link",link:inviteUrl,activation_code:activationCode,email,
-     name:display,expires_at:expiresAt,one_time:true,reinvited:reusingRemovedAccount});
+     name:display,expires_at:expiresAt,one_time:true});
   }
   if(input.action==="invite" || input.action==="create-password-user"){
    const email=String(input.email||"").trim().toLowerCase();
