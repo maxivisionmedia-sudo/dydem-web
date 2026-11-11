@@ -1184,7 +1184,7 @@ if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que 
 if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true)+(i===1?reviewFilesSection(t)+dudasSection(t):'');
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
 return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details data-stage-activity="${t.id}" data-stage-index="${i}" ${openStageByActivity.get(String(t.id))===i?'open':''}><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${needsMyApproval(t)?'needs-my-approval':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`}
-let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
+let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='files'&&canEditStep(5))&&!(action?.type==='review-files'&&canManageReviewFiles(task(action.id))))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
 function close(){if(attachmentUploadBusy){alert('La carga de archivos sigue en curso. Espera a que termine.');return}active=null;$('modal').hidden=true;render()}
 $('modal-cancel').onclick=close;
 function requiredDates(t){return !!t.start&&!!t.end&&t.end>=t.start}
@@ -1196,6 +1196,18 @@ function startup(){
  ${t.steps[6]&&!t.completedDate?`<div class="field"><label>Fecha de finalización *</label><input type="date" name="completedDate-${t.id}" required></div>`:''}
  </div></fieldset>`).join('');
  modal('Completar datos obligatorios',`Hay ${incomplete.length} actividad(es) con fechas pendientes. Puedes cerrarlas y completarlas después.`,fields,{type:'startup',ids:incomplete.map(t=>t.id)});
+}
+function editReviewFiles(t){
+ if(!canManageReviewFiles(t))return;
+ const mayAdd=canAddReviewFile(t);
+ const fields=`${mayAdd?`<div class="field"><label>Subir archivos para Revisión</label>
+ <input type="file" id="attachments-input" multiple>
+ <p class="attachment-upload-help">Archivos opcionales, independientes de Evidencia. Máximo actual: 50 MB por archivo.</p>
+ <span id="attachment-upload-status" role="status"></span></div>`:''}
+ <div id="attachment-list">${attachmentList(t,'review')}</div>`;
+ modal(`Archivos para Revisión · Actividad ${t.annex}`,
+ 'Se pueden gestionar antes de terminar Revisión; después solo el Administrador podrá modificarlos.',
+ fields,{type:'review-files',id:t.id,step:1});
 }
 async function editStep(t,i){
  if(!canEditStep(i)||(approvalStageKey(i)!==null&&!isAdmin()))return;
@@ -1214,16 +1226,6 @@ async function editStep(t,i){
   modal(`${names[i]} · Actividad ${t.annex}`,'Puedes asignar a cualquier usuario activo de DYDEM. Solo los responsables asignados podrán aprobar usando su propia cuenta.',fields,{type:'assign',id:t.id,step:i});
   return;
  }
- if(i===0){
-  if(!isAdmin())return;
-  modal(`Propuesta · Actividad ${t.annex}`,
-   'Archivos opcionales de Propuesta. No cuentan como Evidencia ni alteran el porcentaje de avance.',
-   `<div class="field"><label>Agregar archivos de Propuesta</label><input type="file" id="attachments-input" multiple>
-   <p class="attachment-upload-help">Límite de DYDEM: 500 MB por archivo. Límite actual de Supabase Storage: 50 MB por archivo. Los archivos se registran antes de transferirse y se verifican al concluir.</p>
-   <span id="attachment-upload-status" role="status"></span></div><div id="attachment-list">${attachmentList(t,'proposal')}</div>`,
-   {type:'proposal-files',id:t.id,step:0});
-  return;
- }
  if(i===5){
   modal(`Evidencia · Actividad ${t.annex}`,canAddDocument()?'Añade archivos para acreditar la actividad. La Evidencia es obligatoria para finalizar.':'Puedes quitar archivos existentes; no tienes permiso para subir archivos.',
   `${canAddDocument()?`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple><p class="attachment-upload-help">Máximo de DYDEM: 500 MB por archivo. El almacenamiento actual de Supabase admite hasta 50 MB por archivo. DYDEM registra cada carga antes de enviarla y verifica su aparición en la actividad al finalizar. No cierres la ventana hasta recibir la confirmación.</p><span id="attachment-upload-status" role="status"></span></div>`:''}<div id="attachment-list">${attachmentList(t)}</div>`,
@@ -1231,8 +1233,8 @@ async function editStep(t,i){
  }
 }
 function attachmentList(t,section='evidence'){
- const proposal=section==='proposal',saved=proposal?t.proposalAttachments:t.attachments;
- const mayAdd=proposal?isAdmin():canAddDocument(),mayDelete=proposal?isAdmin():canDeleteDocument();
+ const review=section==='review',saved=review?t.reviewAttachments:t.attachments;
+ const mayAdd=review?canAddReviewFile(t):canAddDocument(),mayDelete=review?canRemoveReviewFile(t):canDeleteDocument();
  const files=(saved||[]).map(a=>`<div class="attachment">${attachmentActions(t,a)}${mayDelete?`<button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button>`:''}</div>`).join('');
  const pending=pendingForActivity(t.id,section).map(a=>`<div class="attachment pending-attachment"><span class="pending-attachment-info">⏳ <b>${esc(a.file_name)}</b><small> Pendiente: ${a.last_error?'No se pudo confirmar.':'Se recuperará automáticamente cuando esté completo.'} ${esc(a.last_error||'')}</small></span>${mayAdd?`<button type="button" class="btn secondary" data-recover-upload="${esc(a.id)}" data-id="${t.id}">Comprobar</button>`:''}</div>`).join('');
  return (files+pending)||'<span class="muted">No hay archivos adjuntos.</span>';
@@ -1251,7 +1253,7 @@ function uncheck(t,i){t.steps[i]=false}
 function linkError(t,field,value){if(!value)return '';if(String(value)===String(t.id))return 'No se puede enlazar una actividad consigo misma.';if(field==='before'&&String(t.after)===String(value)||field==='after'&&String(t.before)===String(value))return 'Las dos dependencias no pueden apuntar a la misma actividad.';let next=task(value),seen=new Set([t.id]);while(next){if(seen.has(next.id))return 'Esta relación crearía un ciclo de dependencias.';seen.add(next.id);next=task(field==='before'?next.before:next.after)}return ''}
 // Storage privado de Supabase. metadata.path pertenece al bucket; nunca al navegador.
 async function putFile(t,file,intent){
- if(intent?.section==='proposal'?!isAdmin():!canAddDocument())throw Error('Sin permisos para adjuntar archivos');
+ if(intent?.section==='review'?!canAddReviewFile(t):!canAddDocument())throw Error('Sin permisos para adjuntar archivos');
  if(file.size>MAX_ATTACHMENT_BYTES)throw Error('No se permite subir archivos de más de 500 MB.');
  if(file.size>CURRENT_STORAGE_LIMIT_BYTES)throw Error('El archivo supera los 50 MB permitidos actualmente por el almacenamiento de Supabase. El máximo de la aplicación es 500 MB, pero el proyecto requiere ampliar su límite de Storage.');
  if(!intent?.id||!intent?.path)throw Error('Falta el registro previo de la carga');
@@ -1316,7 +1318,7 @@ async function reconcileAttachmentIntents(){
  try{
   const targets=[
    {table:'activity_upload_intents',section:'evidence',rpc:'complete_activity_upload'},
-   {table:'proposal_upload_intents',section:'proposal',rpc:'complete_proposal_upload'}
+   {table:'proposal_upload_intents',section:'review',rpc:'complete_review_upload'}
   ];
   const outstanding=new Map(),repaired=[];
   for(const target of targets){
@@ -1357,17 +1359,17 @@ function applyAttachmentServerData(activityId,data,revision){
  revisions.set(id,Number(revision));
  lastSynced.set(id,JSON.stringify(next));
  const list=$('attachment-list');
- if(list&&['files','proposal-files'].includes(active?.type)&&Number(active.id)===id)list.innerHTML=attachmentList(next,active.type==='proposal-files'?'proposal':'evidence');
+ if(list&&['files','review-files'].includes(active?.type)&&Number(active.id)===id)list.innerHTML=attachmentList(next,active.type==='review-files'?'review':'evidence');
  return next;
 }
 async function prepareAttachmentUpload(t,file,section='evidence'){
- if(section==='proposal'?!isAdmin():!canAddDocument())throw Error('Sin permiso para añadir archivos');
+ if(section==='review'?!canAddReviewFile(t):!canAddDocument())throw Error('Sin permiso para añadir archivos');
  const available=pendingForActivity(t.id,section).find(a=>a.file_name===file.name&&Number(a.file_size)===file.size);
  if(available)return {id:available.id,path:available.storage_path,activity_id:t.id,
   name:available.file_name,size:Number(available.file_size),type:available.mime_type,section};
  const uploadId=crypto.randomUUID();
  const safeName=file.name.replace(/[^a-zA-Z0-9._-]+/g,'_').slice(-100)||'anexo';
- const rpc=section==='proposal'?'begin_proposal_upload':'begin_activity_upload';
+ const rpc=section==='review'?'begin_review_upload':'begin_activity_upload';
  const {data,error}=await cloud.rpc(rpc,{
   p_activity_id:Number(t.id),p_upload_id:uploadId,p_file_name:file.name,
   p_storage_name:safeName,p_file_size:file.size,p_mime_type:file.type||'application/octet-stream'
@@ -1377,13 +1379,13 @@ async function prepareAttachmentUpload(t,file,section='evidence'){
  addPendingIntent({id:data.id,activity_id:Number(t.id),file_name:data.name,
   file_size:data.size,mime_type:data.type,storage_path:data.path,section,created_at:new Date().toISOString()});
  const list=$('attachment-list');
- if(list&&((active?.type==='proposal-files'&&section==='proposal')||(active?.type==='files'&&section==='evidence')))
+ if(list&&((active?.type==='review-files'&&section==='review')||(active?.type==='files'&&section==='evidence')))
   list.innerHTML=attachmentList(task(t.id)||t,section);
  return {...data,section};
 }
 async function confirmUploadedAttachment(t,intent,section=intent?.section||'evidence'){
- if(section==='proposal'?!isAdmin():!canAddDocument())throw Error('Sin permiso para añadir archivos');
- const id=Number(t.id),rpc=section==='proposal'?'complete_proposal_upload':'complete_activity_upload';
+ if(section==='review'?!canAddReviewFile(t):!canAddDocument())throw Error('Sin permiso para añadir archivos');
+ const id=Number(t.id),rpc=section==='review'?'complete_review_upload':'complete_activity_upload';
  const {data,error}=await cloud.rpc(rpc,{p_upload_id:intent.id});
  if(error)throw error;
  if(data?.status!=='linked'||!data.data||!Number.isInteger(Number(data.revision)))
@@ -1395,7 +1397,7 @@ async function confirmUploadedAttachment(t,intent,section=intent?.section||'evid
  return next;
 }
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
-async function deleteFile(meta,section='evidence'){if(section==='proposal'?!isAdmin():!canDeleteDocument())throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
+async function deleteFile(meta,section='evidence'){if(section==='review'?!canRemoveReviewFile(t):!canDeleteDocument())throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
 $('board').addEventListener('click',async e=>{
  const target=e.target.closest('button[data-jump-timeline]');
  if(target){jumpToTimeline(target.dataset.jumpTimeline);return}
@@ -1414,6 +1416,7 @@ $('board').addEventListener('click',async e=>{
  }
  if(b.dataset.delete){if(!canDeleteActivity())return;if(!confirm(`¿Eliminar actividad ${t.id}?`))return;syncState('Eliminando…',false,true);const {error}=await cloud.rpc('delete_activity',{p_id:t.id,p_expected_revision:revisions.get(Number(t.id))});if(error){alert('No se pudo eliminar: '+messageError(error));await reloadActivities(true);return}collapsedActivities.delete(String(t.id));persistCollapsed();await reloadActivities(true);return}
  if(b.dataset.rename){if(!canEditStep(0))return;let title=prompt('Descripción de la actividad:',t.title);if(title?.trim()){t.title=title.trim();save();render()}return}
+ if(b.dataset.reviewFiles!==undefined){editReviewFiles(t);return}
  if(b.dataset.edit!==undefined){const i=Number(b.dataset.edit);if((approvalStageKey(i)!==null?isAdmin():canEditStep(i)))editStep(t,i)}
 });
 document.addEventListener('toggle',event=>{
@@ -1555,7 +1558,7 @@ $('board').addEventListener('change',e=>{
  }else return;
  save();render();
 });
-$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='files'&&canAddDocument()))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=['files','proposal-files'].includes(active.type);let form=new FormData(e.target);let err='';try{
+$('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUploadBusy||!(isAdmin()||active.type==='files'&&canAddDocument()||active.type==='review-files'&&canAddReviewFile(task(active.id))))return;const submitButton=e.target.querySelector('button[type="submit"]');if(submitButton)submitButton.disabled=true;attachmentUploadBusy=['files','review-files'].includes(active.type);let form=new FormData(e.target);let err='';try{
  if(active.type==='assign'){
   if(!isAdmin())throw Error('Solo el Administrador puede asignar responsables.');
   const selected=[...$('modal-fields').querySelectorAll('input[name="responsible"]:checked')].map(n=>n.value);
@@ -1570,10 +1573,10 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
   close();
   return;
  }
- if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(['files','proposal-files'].includes(active.type)){
- const section=active.type==='proposal-files'?'proposal':'evidence';
- if(section==='proposal'&&!isAdmin())throw Error('Solo el Administrador puede gestionar archivos de Propuesta.');
+ if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(['files','review-files'].includes(active.type)){
+ const section=active.type==='review-files'?'review':'evidence';
  let t=task(active.id);
+ if(section==='review'&&!canAddReviewFile(t))throw Error('Revisión terminada o sin permiso para subir archivos.');
  const files=Array.from($('attachments-input').files);
  for(const file of files){
   if(file.size>MAX_ATTACHMENT_BYTES)throw Error('No puedes subir archivos de más de 500 MB: '+file.name);
@@ -1591,7 +1594,7 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
   const intent=await prepareAttachmentUpload(current,file,section);
   if(state)state.textContent='Verificando carga anterior: '+file.name;
   // A verification failure must NOT cause re-upload of an already-stored file.
-  const prior=await cloud.rpc(section==='proposal'?'complete_proposal_upload':'complete_activity_upload',{p_upload_id:intent.id});
+  const prior=await cloud.rpc(section==='review'?'complete_review_upload':'complete_activity_upload',{p_upload_id:intent.id});
   if(prior.error)throw Error('No se pudo consultar la carga anterior. El archivo está registrado como pendiente: '+messageError(prior.error));
   const complete=prior.data;
   if(!complete||!['linked','pending'].includes(complete.status))throw Error('Estado de carga desconocido. No se enviará el archivo otra vez.');
@@ -1605,7 +1608,7 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
   try{
    await confirmUploadedAttachment(task(active.id)||current,intent,section);
   }catch(error){
-   throw Error('La carga quedó pendiente en Supabase y NO se perderá. Reabre la sección de '+(section==='proposal'?'Propuesta':'Evidencia')+' o pulsa «Comprobar». '+messageError(error));
+   throw Error('La carga quedó pendiente en Supabase y NO se perderá. Reabre la sección de '+(section==='review'?'Propuesta':'Evidencia')+' o pulsa «Comprobar». '+messageError(error));
   }
   if(state)state.textContent='Archivo registrado y verificado: '+file.name;
  }
@@ -1613,11 +1616,11 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
 $('modal-fields').addEventListener('click',async e=>{
  const recovery=e.target.closest('button[data-recover-upload]');
  if(recovery){
-  const section=active?.type==='proposal-files'?'proposal':'evidence';
-  if(section==='proposal'?!isAdmin():!canAddDocument())return;
+  const section=active?.type==='review-files'?'review':'evidence';
+  if(section==='review'?!canAddReviewFile(t):!canAddDocument())return;
   recovery.disabled=true;
   try{
-   const {data,error}=await cloud.rpc(section==='proposal'?'complete_proposal_upload':'complete_activity_upload',{p_upload_id:recovery.dataset.recoverUpload});
+   const {data,error}=await cloud.rpc(section==='review'?'complete_review_upload':'complete_activity_upload',{p_upload_id:recovery.dataset.recoverUpload});
    if(error)throw error;
    if(data?.status==='linked'){
     forgetPendingIntent(recovery.dataset.recoverUpload,recovery.dataset.id);
@@ -1631,8 +1634,8 @@ $('modal-fields').addEventListener('click',async e=>{
   return;
  }
  const button=e.target.closest('button[data-remove-file]');
- const section=active?.type==='proposal-files'?'proposal':'evidence';
- if(!button||(section==='proposal'?!isAdmin():!canDeleteDocument())||attachmentUploadBusy)return;
+ const section=active?.type==='review-files'?'review':'evidence';
+ if(!button||(section==='review'?!canRemoveReviewFile(t):!canDeleteDocument())||attachmentUploadBusy)return;
  const t=task(button.dataset.id),fileId=button.dataset.removeFile;
  if(!t||!confirm('¿Quitar este anexo de la actividad?'))return;
  button.disabled=true;
@@ -1642,7 +1645,7 @@ $('modal-fields').addEventListener('click',async e=>{
    await save();
    if(isDirty())throw Error('Guarda los cambios pendientes antes de quitar archivos.');
   }
-  const {data,error}=await cloud.rpc(section==='proposal'?'remove_proposal_file':'remove_activity_file',{p_activity_id:Number(t.id),p_file_id:fileId});
+  const {data,error}=await cloud.rpc(section==='review'?'remove_review_file':'remove_activity_file',{p_activity_id:Number(t.id),p_file_id:fileId});
   if(error)throw error;
   if(!data?.data)throw Error('No se confirmó la eliminación');
   applyAttachmentServerData(t.id,data.data,data.revision);
@@ -1657,14 +1660,14 @@ $('modal-fields').addEventListener('click',async e=>{
 document.addEventListener('click',async e=>{
  const open=e.target.closest('[data-preview]');
  if(open){
-  e.preventDefault();const t=task(open.dataset.id),meta=[...(t?.attachments||[]),...(t?.proposalAttachments||[])].find(x=>x.id===open.dataset.preview);
+  e.preventDefault();const t=task(open.dataset.id),meta=[...(t?.attachments||[]),...(t?.reviewAttachments||[])].find(x=>x.id===open.dataset.preview);
   if(meta)await previewAttachment(t,meta);
   return;
  }
  const a=e.target.closest('[data-download]');
  if(!a)return;
  e.preventDefault();
- const t=task(a.dataset.id),meta=[...(t?.attachments||[]),...(t?.proposalAttachments||[])].find(x=>x.id===a.dataset.download);
+ const t=task(a.dataset.id),meta=[...(t?.attachments||[]),...(t?.reviewAttachments||[])].find(x=>x.id===a.dataset.download);
  if(!meta)return;
  try{
   const signed=await signedAttachmentUrl(meta),url=new URL(signed);
@@ -1709,8 +1712,8 @@ function pdf(){
   ${tr('Actividad posterior',t.after?task(t.after)?.annex||t.after:'Ninguna')}
   ${tr('Revisión · Usuarios Responsables',approvalText(t,1))}
   ${tr('Autorización · Usuarios Responsables',approvalText(t,2))}
-  ${tr('Descripción de Propuesta',t.proposalDescription||'Sin descripción')}
-  ${tr('Archivos de Propuesta',t.proposalAttachments.length?t.proposalAttachments.map(a=>a.name).join(', '):'Sin archivos')}
+  ${tr('Descripción de Revisión',t.proposalDescription||'Sin descripción')}
+  ${tr('Archivos de Revisión',t.reviewAttachments.length?t.reviewAttachments.map(a=>a.name).join(', '):'Sin archivos')}
   ${tr('Avance de Obra',t.progress+' %')}${tr('Fecha real de término de obra',t.workCompletedDate||'Sin fecha')}
   ${tr('Verificación · Usuarios Responsables',approvalText(t,4))}
   ${tr('Progreso de Evidencia',evidencePct(t)+' %')}${tr('Evidencia obligatoria',t.attachments.length?t.attachments.map(a=>a.name).join(', '):'Pendiente')}
