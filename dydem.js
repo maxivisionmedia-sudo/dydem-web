@@ -903,42 +903,45 @@ async function putFile(t,file,intent){
 const pendingFileRegistrations=new Map();
 let pendingAttachmentIntents=new Map();
 let attachmentRecoveryRunning=false;
-function pendingForActivity(id){return pendingAttachmentIntents.get(Number(id))||[]}
+function pendingForActivity(id,section='evidence'){return (pendingAttachmentIntents.get(Number(id))||[]).filter(x=>(x.section||'evidence')===section)}
 function addPendingIntent(intent){
  const id=Number(intent.activity_id);
- const list=pendingForActivity(id).filter(x=>x.id!==intent.id);
+ const list=(pendingAttachmentIntents.get(id)||[]).filter(x=>x.id!==intent.id);
  list.push(intent);pendingAttachmentIntents.set(id,list);
 }
 function forgetPendingIntent(intentId,activityId){
  const id=Number(activityId);
- const left=pendingForActivity(id).filter(x=>x.id!==intentId);
+ const left=(pendingAttachmentIntents.get(id)||[]).filter(x=>x.id!==intentId);
  if(left.length)pendingAttachmentIntents.set(id,left);else pendingAttachmentIntents.delete(id);
 }
 async function reconcileAttachmentIntents(){
  if(!isSignedIn()||attachmentRecoveryRunning)return;
  attachmentRecoveryRunning=true;
  try{
-  const {data,error}=await cloud.from('activity_upload_intents')
+  const targets=[
+   {table:'activity_upload_intents',section:'evidence',rpc:'complete_activity_upload'},
+   {table:'proposal_upload_intents',section:'proposal',rpc:'complete_proposal_upload'}
+  ];
+  const outstanding=new Map(),repaired=[];
+  for(const target of targets){
+   const {data,error}=await cloud.from(target.table)
     .select('id,activity_id,file_name,file_size,mime_type,storage_path,created_at')
     .eq('uploaded_by',currentAccount.id).eq('status','pending')
     .order('created_at',{ascending:true});
-  if(error)throw error;
-  const outstanding=new Map(),repaired=[];
-  for(const intent of data||[]){
-   let completed=null;
-   try{
-    const result=await cloud.rpc('complete_activity_upload',{p_upload_id:intent.id});
-    if(result.error)throw result.error;
-    completed=result.data;
-   }catch(err){
-    // Do not lose the intent if Storage or the data API is temporarily unreachable.
-    intent.last_error=messageError(err);
+   if(error)throw error;
+   for(const found of data||[]){
+    const intent={...found,section:target.section};
+    let completed=null;
+    try{
+     const result=await cloud.rpc(target.rpc,{p_upload_id:intent.id});
+     if(result.error)throw result.error;
+     completed=result.data;
+    }catch(err){intent.last_error=messageError(err)}
+    if(completed?.status==='linked'){repaired.push(intent.id);continue}
+    const id=Number(intent.activity_id),items=outstanding.get(id)||[];
+    items.push(intent);outstanding.set(id,items);
    }
-   if(completed?.status==='linked'){repaired.push(intent.id);continue}
-   const id=Number(intent.activity_id),items=outstanding.get(id)||[];
-   items.push(intent);outstanding.set(id,items);
   }
-  // Preserve an intent created during a concurrent upload; discard outdated intents otherwise.
   if(attachmentUploadBusy)for(const [id,items] of pendingAttachmentIntents){
    for(const item of items){
     if(repaired.includes(item.id))continue;
@@ -947,10 +950,9 @@ async function reconcileAttachmentIntents(){
    }
   }
   pendingAttachmentIntents=outstanding;
-  if(repaired.length)syncState('Se recuperaron '+repaired.length+' anexo(s) pendientes');
+  if(repaired.length)syncState('Se recuperaron '+repaired.length+' archivo(s) pendientes');
  }finally{attachmentRecoveryRunning=false}
 }
-
 function pendingUploadKey(t,file){return [t.id,file.name,file.size,file.lastModified].join('::')}
 function applyAttachmentServerData(activityId,data,revision){
  const id=Number(activityId),next=migrate({...data,id});
@@ -959,38 +961,41 @@ function applyAttachmentServerData(activityId,data,revision){
  revisions.set(id,Number(revision));
  lastSynced.set(id,JSON.stringify(next));
  const list=$('attachment-list');
- if(list&&active?.type==='files'&&Number(active.id)===id)list.innerHTML=attachmentList(next);
+ if(list&&['files','proposal-files'].includes(active?.type)&&Number(active.id)===id)list.innerHTML=attachmentList(next,active.type==='proposal-files'?'proposal':'evidence');
  return next;
 }
-async function prepareAttachmentUpload(t,file){
- if(!canAddDocument())throw Error('Sin permiso para añadir archivos');
- const available=pendingForActivity(t.id).find(a=>a.file_name===file.name&&Number(a.file_size)===file.size);
+async function prepareAttachmentUpload(t,file,section='evidence'){
+ if(section==='proposal'?!isAdmin():!canAddDocument())throw Error('Sin permiso para añadir archivos');
+ const available=pendingForActivity(t.id,section).find(a=>a.file_name===file.name&&Number(a.file_size)===file.size);
  if(available)return {id:available.id,path:available.storage_path,activity_id:t.id,
-  name:available.file_name,size:Number(available.file_size),type:available.mime_type};
+  name:available.file_name,size:Number(available.file_size),type:available.mime_type,section};
  const uploadId=crypto.randomUUID();
  const safeName=file.name.replace(/[^a-zA-Z0-9._-]+/g,'_').slice(-100)||'anexo';
- const {data,error}=await cloud.rpc('begin_activity_upload',{
+ const rpc=section==='proposal'?'begin_proposal_upload':'begin_activity_upload';
+ const {data,error}=await cloud.rpc(rpc,{
   p_activity_id:Number(t.id),p_upload_id:uploadId,p_file_name:file.name,
   p_storage_name:safeName,p_file_size:file.size,p_mime_type:file.type||'application/octet-stream'
  });
  if(error)throw error;
  if(!data?.id||!data.path)throw Error('No se pudo crear el registro previo del archivo');
  addPendingIntent({id:data.id,activity_id:Number(t.id),file_name:data.name,
-  file_size:data.size,mime_type:data.type,storage_path:data.path,created_at:new Date().toISOString()});
- const list=$('attachment-list');if(list)list.innerHTML=attachmentList(task(t.id)||t);
- return data;
+  file_size:data.size,mime_type:data.type,storage_path:data.path,section,created_at:new Date().toISOString()});
+ const list=$('attachment-list');
+ if(list&&((active?.type==='proposal-files'&&section==='proposal')||(active?.type==='files'&&section==='evidence')))
+  list.innerHTML=attachmentList(task(t.id)||t,section);
+ return {...data,section};
 }
-async function confirmUploadedAttachment(t,intent){
- if(!canAddDocument())throw Error('Sin permiso para añadir archivos');
- const id=Number(t.id);
- const {data,error}=await cloud.rpc('complete_activity_upload',{p_upload_id:intent.id});
+async function confirmUploadedAttachment(t,intent,section=intent?.section||'evidence'){
+ if(section==='proposal'?!isAdmin():!canAddDocument())throw Error('Sin permiso para añadir archivos');
+ const id=Number(t.id),rpc=section==='proposal'?'complete_proposal_upload':'complete_activity_upload';
+ const {data,error}=await cloud.rpc(rpc,{p_upload_id:intent.id});
  if(error)throw error;
  if(data?.status!=='linked'||!data.data||!Number.isInteger(Number(data.revision)))
   throw Error('El archivo aún está pendiente de confirmación en Supabase');
  forgetPendingIntent(intent.id,id);
  pendingFileRegistrations.delete(intent.id);
  const next=applyAttachmentServerData(id,data.data,data.revision);
- syncState('Anexo guardado y verificado');
+ syncState('Archivo guardado y verificado');
  return next;
 }
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
