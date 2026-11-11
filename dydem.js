@@ -217,8 +217,10 @@ $('invite-activation').addEventListener('submit',async e=>{
   if(!inviteOtpVerified){
    const {data:{session}}=await cloud.auth.getSession();
    if(session?.user){
-    const {data:p}=await cloud.from('profiles').select('id,invite_pending,active').eq('id',session.user.id).maybeSingle();
-    if(p?.invite_pending&&!p.active)inviteOtpVerified=true;
+    const {data:canResume,error:resumeError}=await cloud.rpc('dydem_resume_invitation',{
+     p_token_digest:await inviteSha256(inviteToken)
+    });
+    if(!resumeError&&canResume===true)inviteOtpVerified=true;
    }
    if(!inviteOtpVerified){
     const {data,error}=await cloud.auth.verifyOtp({token_hash:inviteToken,type:inviteKind});
