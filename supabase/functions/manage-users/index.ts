@@ -110,6 +110,21 @@ serve(async (req:Request)=>{
    return respond(200,{ok:true,link:defaultSite+"#invite="+token+"&kind=register",
      email:email||null,email_fixed:!!email,expires_at:expiresAt,one_time:true});
   }
+  if(input.action==="renew-copy-link"){
+   const id=String(input.user_id||"");
+   if(!/^[0-9a-f-]{36}$/i.test(id))return respond(400,{error:"Elige una cuenta con invitación pendiente."});
+   const {data:pending,error:pendingError}=await admin.from("profiles")
+     .select("id,email,active,invite_pending,removed_at").eq("id",id).maybeSingle();
+   if(pendingError||!pending||pending.removed_at||pending.active||!pending.invite_pending)
+     return respond(409,{error:"Solo pueden renovarse los registros pendientes."});
+   const {data:generated,error:genError}=await admin.auth.admin.generateLink({
+     type:"magiclink",email:pending.email,options:{redirectTo:defaultSite}
+   });
+   if(genError||generated?.user?.id!==id||!generated.properties?.hashed_token)
+     return respond(503,{error:"Supabase no pudo generar un enlace nuevo para este correo."});
+   return respond(200,{ok:true,link:defaultSite+"#invite="+encodeURIComponent(generated.properties.hashed_token)+
+     "&kind=magiclink",email:pending.email,email_fixed:true,expires_at:null,one_time:true});
+  }
   if(input.action==="set-display-name"){
    const id=String(input.user_id||""),display=String(input.display_name||"").trim();
    if(!/^[0-9a-f-]{36}$/i.test(id)||display.length<2||display.length>120)
