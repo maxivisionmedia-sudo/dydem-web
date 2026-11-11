@@ -82,29 +82,42 @@ async function prepareInvitationForm(){
     ?'Tu correo ya está establecido por el Administrador. Elige tu nombre y contraseña para completar el registro.'
     :'Escribe tu correo, elige tu nombre y crea una contraseña. El enlace solo permite registrar una cuenta.';
   }else{
+   // A pending account is intentionally hidden by profiles_read RLS.
+   // Show only the email returned by the own-account verified invitation RPC.
+   $('invite-registration-email-wrap').hidden=true;
+   $('invite-registration-email').required=false;
+   $('invite-fixed-email').hidden=false;
+   $('invite-fixed-email').textContent='Verificando el correo de tu invitación…';
    let {data:{session},error:sessionError}=await cloud.auth.getSession();
    if(sessionError)throw sessionError;
    const hash=inviteToken||authHashParams.get('token_hash')||authSearchParams.get('token_hash');
    const kind=authHashParams.get('kind')==='magiclink'?'magiclink':'invite';
    let usableSession=false;
    if(session?.user?.id){
-    const {data:who}=await cloud.from('profiles')
-     .select('invite_pending,active').eq('id',session.user.id).maybeSingle();
-    usableSession=!!who?.invite_pending&&!who?.active;
+    const {data:check,error:checkError}=await cloud.rpc('dydem_check_email_invitation');
+    usableSession=!checkError&&check?.ok===true&&
+      String(check.email).toLowerCase()===String(session.user.email||'').toLowerCase();
    }
    if(!usableSession&&hash){
     const {data,error}=await cloud.auth.verifyOtp({token_hash:hash,type:kind});
-    if(error)throw error;
+    if(error)throw Error('No se pudo validar el enlace recibido: '+messageError(error));
     session=data?.session;
    }
-   if(!session?.user?.id)throw Error('Primero abre el enlace de correo más reciente enviado por Supabase.');
-   const {data:profile,error}=await cloud.from('profiles')
-    .select('email,active,invite_pending').eq('id',session.user.id).maybeSingle();
-   if(error||!profile||profile.active||!profile.invite_pending)
-    throw Error('La invitación por correo no está pendiente o ya fue utilizada.');
-   setInvitationEmail(profile.email,true);
+   if(!session?.user?.id)
+    throw Error('Primero abre el enlace de invitación más reciente recibido por correo.');
+   const {data:invitation,error}=await cloud.rpc('dydem_check_email_invitation');
+   if(error)throw Error('No se pudo consultar la invitación de tu cuenta: '+messageError(error));
+   if(!invitation?.ok){
+    if(invitation?.reason==='not_verified')throw Error('El correo aún no está verificado. Abre el enlace recibido por email.');
+    if(invitation?.reason==='not_pending')
+     throw Error('Esta cuenta ya no tiene una invitación pendiente. Si todavía no terminaste el registro, solicita un enlace nuevo al Administrador.');
+    throw Error('La invitación no corresponde a esta sesión. Abre el enlace correcto desde tu correo.');
+   }
+   if(String(session.user.email||'').toLowerCase()!==String(invitation.email||'').toLowerCase())
+    throw Error('La cuenta autenticada no corresponde al correo invitado.');
+   setInvitationEmail(invitation.email,true);
    $('invite-registration-description').textContent=
-    'Supabase verificó tu correo. Elige tu nombre de usuario y tu contraseña para terminar el registro.';
+    'Tu correo fue verificado por Supabase y se asignó automáticamente. Solo elige tu nombre de usuario y tu contraseña.';
   }
   invitationLoaded=true;
   feedback.textContent='';
