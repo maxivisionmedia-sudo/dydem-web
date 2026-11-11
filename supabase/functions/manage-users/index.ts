@@ -110,14 +110,17 @@ serve(async (req:Request)=>{
        .eq("invited_user",authId).is("accepted_at",null).is("revoked_at",null);
      if(revokeError)return respond(500,{error:"No se pudo revocar la invitación anterior."});
    }
+   const alphabet="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+   const secretBytes=crypto.getRandomValues(new Uint8Array(12));
+   const activationCode=Array.from(secretBytes,b=>alphabet[b%alphabet.length]).join("");
    const expiresAt=new Date(Date.now()+60*60*1000).toISOString();
    const {error:saveError}=await admin.from("dydem_invitation_links").insert({
-     token_digest:await tokenDigest(token),invited_user:authId,
-     invited_email:email,created_by:user.id,expires_at:expiresAt
+     token_digest:await tokenDigest(token),code_digest:await tokenDigest(activationCode),
+     invited_user:authId,invited_email:email,created_by:user.id,expires_at:expiresAt
    });
    if(saveError)return respond(500,{error:"No se pudo registrar la verificación del enlace. No se entregó ningún enlace."});
    const inviteUrl=defaultSite+"#invite="+encodeURIComponent(token)+"&kind="+authType;
-   return respond(200,{ok:true,method:"copy-link",link:inviteUrl,email,
+   return respond(200,{ok:true,method:"copy-link",link:inviteUrl,activation_code:activationCode,email,
      name:display,expires_at:expiresAt,one_time:true});
   }
   if(input.action==="invite" || input.action==="create-password-user"){
