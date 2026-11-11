@@ -51,7 +51,19 @@ serve(async(req:Request)=>{
  const {data:reserved,error:claimError}=await admin.rpc("dydem_claim_registration_invite",{
   p_digest:digest,p_claim:claim,p_email:email
  });
- if(claimError)return reply(503,{error:"No se pudo reservar la invitación. Vuelve a intentarlo"});
+ if(claimError){
+  // The underlying problem must be visible to administrators in function
+  // logs; do not leak private SQL details or secrets to a public caller.
+  console.error("DYDEM invitation claim error",{
+   code:claimError.code||"UNKNOWN",message:claimError.message||"Unspecified RPC failure"
+  });
+  const blocked=claimError.code==="42501"||claimError.code==="PGRST301";
+  return reply(503,{code:"INVITATION_RESERVATION_ERROR",
+   error:blocked
+    ?"DYDEM encontró un error de autorización del servidor. Contacta al Administrador para revisarlo."
+    :"No fue posible validar la invitación por un problema del servidor. Puedes reintentar sin perder el enlace."
+  });
+ }
  if(!reserved?.ok)return reply(409,{error:reserved?.error||"Invitación no disponible"});
  let userId:string|null=null;
  try{
