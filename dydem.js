@@ -306,14 +306,17 @@ $('change-password').onclick=()=>{
 $('cancel-password').onclick=()=>{storeSet(RECOVERY_PENDING_KEY,'0');showLoginForm();};
 async function showUsers(){
  if(!isAdmin())return;
- const {data,error}=await cloud.from('profiles').select('id,email,display_name,role,permissions,active,last_login_at,removed_at').is('removed_at',null).order('created_at',{ascending:true});
+ const {data,error}=await cloud.from('profiles').select('id,email,display_name,role,permissions,active,last_login_at,removed_at,invite_pending').is('removed_at',null).order('created_at',{ascending:true});
  if(error){$('user-error').textContent=messageError(error);return}
  $('user-list').innerHTML=(data||[]).map(a=>{
-  const self=a.id===currentAccount.id, p=a.permissions||emptyPermissions();
+  const self=a.id===currentAccount.id, pending=!!a.invite_pending, p=a.permissions||emptyPermissions();
   const opts=['viewer','custom','admin'].map(r=>`<option value="${r}" ${r===a.role?'selected':''}>${roleLabel(r)}</option>`).join('');
   return `<div class="user-entry">
-   <div class="user-summary"><b>${esc(a.display_name||a.email)}</b><span>${esc(a.email)} · ${roleLabel(a.role)} · ${a.active?'Activo':'Desactivado'}</span><small>Último acceso: ${a.last_login_at?esc(new Date(a.last_login_at).toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'})):'Aún no registrado'}</small>${a.role==='custom'?`<small>${esc(permissionSummary(p))}</small>`:''}</div>
-   <div class="user-actions">${self?'<span class="muted">(sesión actual)</span>':`<button class="btn secondary" type="button" data-toggle-user="${esc(a.id)}" data-active="${a.active?'true':'false'}">${a.active?'Desactivar':'Reactivar'}</button><button class="btn secondary" type="button" data-configure-user="${esc(a.id)}">Configurar permisos</button><button class="btn danger user-remove-btn" type="button" data-remove-user="${esc(a.id)}" data-user-name="${esc(a.display_name||a.email)}">Remover usuario</button>`}</div>
+   <div class="user-summary"><b>${esc(a.display_name||a.email)}</b><span>${esc(a.email)} · ${roleLabel(a.role)} · ${pending?'Invitación pendiente':a.active?'Activo':'Desactivado'}</span><small>Último acceso: ${a.last_login_at?esc(new Date(a.last_login_at).toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'})):'Aún no registrado'}</small>${a.role==='custom'?`<small>${esc(permissionSummary(p))}</small>`:''}</div>
+   <div class="user-actions">${self?'<span class="muted">(sesión actual)</span>':`${pending?
+   `<button class="btn secondary" type="button" data-renew-copy-invite="${esc(a.id)}">Regenerar enlace</button>`:
+   `<button class="btn secondary" type="button" data-toggle-user="${esc(a.id)}" data-active="${a.active?'true':'false'}">${a.active?'Desactivar':'Reactivar'}</button>`}
+  <button class="btn secondary" type="button" data-configure-user="${esc(a.id)}">Configurar permisos</button><button class="btn danger user-remove-btn" type="button" data-remove-user="${esc(a.id)}" data-user-name="${esc(a.display_name||a.email)}">Remover usuario</button>`}</div>
    ${self?'':`<div class="user-permissions-editor" data-editor-user="${esc(a.id)}" hidden>
     <label>Tipo de permiso<select data-edit-role>${opts}</select></label>
     <fieldset class="permission-panel" data-edit-custom ${a.role==='custom'?'':'hidden'}><legend>Permitir modificar estas etapas</legend>${permissionChooser(a.id,p)}</fieldset>
@@ -394,22 +397,59 @@ $('email-reminders-user-list').addEventListener('change',async event=>{
  }
 });
 $('manage-users').onclick=()=>{if(!isAdmin())return;$('user-management').hidden=!$('user-management').hidden;if(!$('user-management').hidden){showUsers();void showReminderAdminSettings()}};
+function displayGeneratedInvitation(data){
+ if(!isAdmin()||!data?.link||!data?.activation_code)throw Error('El servidor no entregó un enlace y código verificables.');
+ $('generated-invitation-link').value=data.link;
+ $('generated-invitation-code').value=data.activation_code;
+ $('generated-invitation-expiry').textContent='Enlace de un solo uso para '+data.email+
+   ' · caduca como máximo '+new Date(data.expires_at).toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'})+
+   '. Envía el código por un canal distinto del enlace.';
+ $('generated-invitation').hidden=false;
+}
+async function copyGeneratedCredential(inputId,buttonId,label){
+ if(!isAdmin())return;
+ const input=$(inputId),button=$(buttonId);
+ if(!input?.value)return;
+ try{
+  await navigator.clipboard.writeText(input.value);
+  button.textContent=label+' copiado';
+ }catch(err){
+  input.focus();input.select();
+  $('user-error').textContent='Selecciona el texto resaltado y copia con Ctrl+C.';
+ }
+}
+$('copy-generated-invitation-link').onclick=()=>copyGeneratedCredential('generated-invitation-link','copy-generated-invitation-link','Enlace');
+$('copy-generated-invitation-code').onclick=()=>copyGeneratedCredential('generated-invitation-code','copy-generated-invitation-code','Código');
+$('new-method').onchange=()=>{
+ const submit=$('user-create').querySelector('button[type="submit"]');
+ submit.textContent=$('new-method').value==='copy-link'?'Generar enlace de invitación':'Registrar usuario';
+};
 $('user-create').onsubmit=async e=>{
  e.preventDefault();if(!isAdmin())return;
  const btn=e.submitter||$('user-create').querySelector('button[type="submit"]');
  const temporary=$('new-method').value==='temporary';
+ const copiedLink=$('new-method').value==='copy-link';
  const role=$('new-role').value;const permissions=role==='custom'?readPermissions($('new-custom-permissions')):emptyPermissions();
  btn.disabled=true;
  $('temporary-access').hidden=true;
  $('temporary-password').value='';
- $('user-error').textContent=temporary?'Creando cuenta…':'Enviando invitación…';
+ $('generated-invitation').hidden=true;
+ $('generated-invitation-link').value='';
+ $('generated-invitation-code').value='';
+ $('copy-generated-invitation-link').textContent='Copiar enlace';
+ $('copy-generated-invitation-code').textContent='Copiar código';
+ $('user-error').textContent=copiedLink?'Generando enlace exclusivo…':temporary?'Creando cuenta…':'Enviando invitación…';
  try{
   const {data,error}=await cloud.functions.invoke('manage-users',{
-   body:{action:temporary?'create-password-user':'invite',email:$('new-user').value.trim(),name:$('new-name').value.trim(),role,permissions}
+   body:{action:copiedLink?'create-copy-link':temporary?'create-password-user':'invite',
+     email:$('new-user').value.trim(),name:$('new-name').value.trim(),role,permissions}
   });
   if(error)throw Error(await edgeErrorMessage(error));
   if(data?.error)throw Error(data.error);
-  if(temporary){
+  if(copiedLink){
+   displayGeneratedInvitation(data);
+   $('user-error').textContent='Enlace generado y verificado. Copia el enlace y el código por separado.';
+  }else if(temporary){
    if(!data?.temporaryPassword)throw Error('La cuenta fue creada, pero la contraseña temporal no se recibió. Consulta el administrador de Supabase.');
    $('temporary-password').value=data.temporaryPassword;
    $('temporary-access').hidden=false;
@@ -417,10 +457,10 @@ $('user-create').onsubmit=async e=>{
   }else{
    $('user-error').textContent='Invitación enviada. La persona deberá aceptar el correo y establecer su contraseña.';
   }
-  $('user-create').reset();$('new-custom-permissions').hidden=true;
+  $('user-create').reset();$('new-custom-permissions').hidden=true;$('new-method').onchange();
   await showUsers();
  }catch(err){
-  $('user-error').textContent='No se pudo '+(temporary?'crear el acceso':'enviar la invitación')+': '+messageError(err);
+  $('user-error').textContent='No se pudo '+(copiedLink?'generar el enlace':temporary?'crear el acceso':'enviar la invitación')+': '+messageError(err);
  }finally{btn.disabled=false}
 };
 $('copy-temporary-password').onclick=async()=>{
@@ -441,11 +481,31 @@ $('user-list').addEventListener('change',e=>{
 });
 $('user-list').onclick=async e=>{
  const toggle=e.target.closest('[data-toggle-user]');
+ const renew=e.target.closest('button[data-renew-copy-invite]');
  const remove=e.target.closest('button[data-remove-user]');
  const config=e.target.closest('[data-configure-user]');
  const cancel=e.target.closest('[data-cancel-user-permissions]');
  const submit=e.target.closest('[data-save-user-permissions]');
  if(!isAdmin())return;
+ if(renew){
+  if(!confirm('¿Regenerar el enlace pendiente? El enlace anterior dejará de ser válido y se generará un nuevo código de activación.'))return;
+  renew.disabled=true;
+  $('user-error').textContent='Generando nueva invitación…';
+  try{
+   const {data,error}=await cloud.functions.invoke('manage-users',{
+    body:{action:'renew-copy-link',user_id:renew.dataset.renewCopyInvite}
+   });
+   if(error)throw Error(await edgeErrorMessage(error));
+   if(data?.error)throw Error(data.error);
+   displayGeneratedInvitation(data);
+   $('user-error').textContent='Nuevo enlace generado; el anterior fue revocado. Copia y envía el enlace y el nuevo código por separado.';
+   await showUsers();
+  }catch(err){
+   $('user-error').textContent='No se pudo regenerar el enlace: '+messageError(err);
+   renew.disabled=false;
+  }
+  return;
+ }
  if(remove){
   const id=remove.dataset.removeUser,name=remove.dataset.userName||'este usuario';
   if(id===currentAccount.id)return;
