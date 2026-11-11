@@ -228,7 +228,78 @@ async function showUsers(){
   </div>`;
  }).join('');
 }
-$('manage-users').onclick=()=>{if(!isAdmin())return;$('user-management').hidden=!$('user-management').hidden;if(!$('user-management').hidden)showUsers()};
+
+/* Avisos diarios por correo: solo el administrador puede modificar la
+   configuración y las exclusiones por usuario. Nunca devolver la API key. */
+function renderReminderAdminSettings(data){
+ if(!isAdmin()||!data)return;
+ $('email-reminders-enabled').checked=!!data.enabled;
+ $('email-reminders-from').value=data.sender||'';
+ $('email-reminders-api-key').value='';
+ const state=data.enabled
+  ?'Recordatorios activados · Revisiones desde las 08:00 (Ciudad de México).'
+  :data.configured
+   ?'Recordatorios desactivados por el Administrador. Credencial guardada.'
+   :'Recordatorios desactivados · Configura el remitente verificado y la clave de Resend.';
+ $('email-reminders-status').textContent=state;
+ const people=Array.isArray(data.recipients)?data.recipients:[];
+ $('email-reminders-user-list').innerHTML=people.map(p=>
+  `<div class="reminder-user-row"><span><strong>${esc(p.name||'Usuario')}</strong> · ${esc(p.email||'Sin correo')}
+  ${p.active?'':' · Cuenta inactiva'}</span><label><input type="checkbox"
+    data-email-reminder-user="${esc(p.id)}" ${p.enabled?'checked':''} ${p.active?'':'disabled'}>
+    Enviar recordatorios</label></div>`).join('')||'<p class="muted">Sin usuarios registrados.</p>';
+}
+async function showReminderAdminSettings(){
+ if(!isAdmin())return;
+ $('email-reminders-status').textContent='Consultando la configuración de correo…';
+ const {data,error}=await cloud.rpc('dydem_reminder_admin_settings');
+ if(error){
+  $('email-reminders-status').textContent='No se pudo cargar la configuración: '+messageError(error);
+  return;
+ }
+ renderReminderAdminSettings(data);
+}
+$('email-reminders-form').onsubmit=async event=>{
+ event.preventDefault();
+ if(!isAdmin())return;
+ const submit=$('email-reminders-save'),feedback=$('email-reminders-feedback');
+ const enabled=$('email-reminders-enabled').checked;
+ const sender=$('email-reminders-from').value.trim();
+ const key=$('email-reminders-api-key').value.trim();
+ submit.disabled=true;feedback.textContent='Guardando ajustes de notificaciones…';
+ try{
+  const {data,error}=await cloud.rpc('dydem_set_reminder_config',{
+   p_enabled:enabled,p_from_address:sender||null,p_resend_api_key:key||null
+  });
+  if(error)throw error;
+  renderReminderAdminSettings(data);
+  feedback.textContent=data.enabled
+   ?'Recordatorios activados. Cada responsable recibirá como máximo un resumen al día.'
+   :'Recordatorios desactivados para todo el equipo.';
+ }catch(err){
+  feedback.textContent='No se pudo guardar: '+messageError(err);
+ }finally{submit.disabled=false}
+};
+$('email-reminders-user-list').addEventListener('change',async event=>{
+ const toggle=event.target.closest('input[data-email-reminder-user]');
+ if(!toggle||!isAdmin())return;
+ const newState=toggle.checked;
+ toggle.disabled=true;
+ const feedback=$('email-reminders-feedback');
+ try{
+  const {error}=await cloud.rpc('dydem_set_user_reminders',{
+   p_user_id:toggle.dataset.emailReminderUser,p_enabled:newState
+  });
+  if(error)throw error;
+  feedback.textContent='Preferencia de correo del usuario actualizada.';
+  await showReminderAdminSettings();
+ }catch(err){
+  toggle.checked=!newState;
+  toggle.disabled=false;
+  feedback.textContent='No se pudo cambiar el permiso de correo: '+messageError(err);
+ }
+});
+$('manage-users').onclick=()=>{if(!isAdmin())return;$('user-management').hidden=!$('user-management').hidden;if(!$('user-management').hidden){showUsers();void showReminderAdminSettings()}};
 $('user-create').onsubmit=async e=>{
  e.preventDefault();if(!isAdmin())return;
  const btn=e.submitter||$('user-create').querySelector('button[type="submit"]');
