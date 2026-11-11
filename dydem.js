@@ -1184,7 +1184,7 @@ if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que 
 if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true)+(i===1?reviewFilesSection(t)+dudasSection(t):'');
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
 return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details data-stage-activity="${t.id}" data-stage-index="${i}" ${openStageByActivity.get(String(t.id))===i?'open':''}><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${needsMyApproval(t)?'needs-my-approval':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`}
-let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='files'&&canEditStep(5))&&!(action?.type==='review-files'&&canManageReviewFiles(task(action.id))))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
+let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='files'&&canEditStep(5))&&!(action?.type==='review-files'&&canManageReviewFiles(task(action.id))))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=(action?.type==='files'&&!canAddDocument()||action?.type==='review-files'&&!canAddReviewFile(task(action.id)))?'none':'';$('modal').hidden=false;}
 function close(){if(attachmentUploadBusy){alert('La carga de archivos sigue en curso. Espera a que termine.');return}active=null;$('modal').hidden=true;render()}
 $('modal-cancel').onclick=close;
 function requiredDates(t){return !!t.start&&!!t.end&&t.end>=t.start}
@@ -1397,7 +1397,7 @@ async function confirmUploadedAttachment(t,intent,section=intent?.section||'evid
  return next;
 }
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
-async function deleteFile(meta,section='evidence'){if(section==='review'?!canRemoveReviewFile(t):!canDeleteDocument())throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
+async function deleteFile(meta,section='evidence'){const activity=task(active?.id);if(section==='review'?!canRemoveReviewFile(activity):!canDeleteDocument())throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
 $('board').addEventListener('click',async e=>{
  const target=e.target.closest('button[data-jump-timeline]');
  if(target){jumpToTimeline(target.dataset.jumpTimeline);return}
@@ -1576,8 +1576,8 @@ $('modal-form').onsubmit=async e=>{e.preventDefault();if(!active||attachmentUplo
  if(active.type==='startup'){for(let id of active.ids){let t=task(id);for(let f of ['start','end','completedDate']){let k=f+'-'+id;if(form.has(k))t[f]=String(form.get(k)).trim()}if(requiredDates(t))autoCheck(t,0);if(!requiredDates(t))err=`Las fechas de la actividad ${id} deben estar completas y la final no puede ser anterior a la inicial.`}}else if(['files','review-files'].includes(active.type)){
  const section=active.type==='review-files'?'review':'evidence';
  let t=task(active.id);
- if(section==='review'&&!canAddReviewFile(t))throw Error('Revisión terminada o sin permiso para subir archivos.');
- const files=Array.from($('attachments-input').files);
+ if(section==='review'&&!canAddReviewFile(t)&&$('attachments-input')?.files?.length)throw Error('Revisión terminada o sin permiso para subir archivos.');
+ const files=Array.from($('attachments-input')?.files||[]);
  for(const file of files){
   if(file.size>MAX_ATTACHMENT_BYTES)throw Error('No puedes subir archivos de más de 500 MB: '+file.name);
   if(file.size>CURRENT_STORAGE_LIMIT_BYTES)throw Error('El almacenamiento actual de Supabase admite como máximo 50 MB por archivo: '+file.name);
@@ -1617,7 +1617,7 @@ $('modal-fields').addEventListener('click',async e=>{
  const recovery=e.target.closest('button[data-recover-upload]');
  if(recovery){
   const section=active?.type==='review-files'?'review':'evidence';
-  if(section==='review'?!canAddReviewFile(t):!canAddDocument())return;
+  if(section==='review'?!canAddReviewFile(task(recovery.dataset.id)):!canAddDocument())return;
   recovery.disabled=true;
   try{
    const {data,error}=await cloud.rpc(section==='review'?'complete_review_upload':'complete_activity_upload',{p_upload_id:recovery.dataset.recoverUpload});
@@ -1635,7 +1635,7 @@ $('modal-fields').addEventListener('click',async e=>{
  }
  const button=e.target.closest('button[data-remove-file]');
  const section=active?.type==='review-files'?'review':'evidence';
- if(!button||(section==='review'?!canRemoveReviewFile(t):!canDeleteDocument())||attachmentUploadBusy)return;
+ if(!button||(section==='review'?!canRemoveReviewFile(task(button.dataset.id)):!canDeleteDocument())||attachmentUploadBusy)return;
  const t=task(button.dataset.id),fileId=button.dataset.removeFile;
  if(!t||!confirm('¿Quitar este anexo de la actividad?'))return;
  button.disabled=true;
