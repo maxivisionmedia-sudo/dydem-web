@@ -1748,141 +1748,148 @@ function pdf(){
  printWindow('DYDEM - Reporte de actividades',content,css);
 }
 function pdfTimeline(){
- const d=timelineData();
- const WEEKS_PER_SHEET=4,DAYS_PER_SHEET=28,ROWS_PER_SHEET=18;
- const weekSheets=Math.max(1,Math.ceil(d.weeks.length/WEEKS_PER_SHEET));
- const activitySheets=Math.max(1,Math.ceil(tasks.length/ROWS_PER_SHEET));
- const totalSheets=weekSheets*activitySheets;
- const dayNames=['Lu','Ma','Mi','Ju','Vi','Sa','Do'];
- const fmtISO=n=>new Date(n*86400000).toISOString().slice(0,10);
- const fmtShort=n=>{
-  const dt=new Date(n*86400000);
-  return String(dt.getUTCDate()).padStart(2,'0')+'/'+String(dt.getUTCMonth()+1).padStart(2,'0');
+ const d=timelineData(),DAYS=28,WEEKS=4,MAX_ROWS=22,dayMS=86400000;
+ const weekdays=['Lu','Ma','Mi','Ju','Vi','Sa','Do'];
+ const today=new Date(),todayDay=Math.floor(Date.UTC(today.getFullYear(),today.getMonth(),today.getDate())/dayMS);
+ const generated=today.toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'});
+ const fDate=n=>{const a=new Date(n*dayMS);return String(a.getUTCDate()).padStart(2,'0')+'/'+String(a.getUTCMonth()+1).padStart(2,'0')};
+ const pct=n=>(n*100/DAYS).toFixed(5);
+ const clip=(a,b,start)=>{
+  if(a===null||b===null||a>b)return null;
+  const x=Math.max(a,start),y=Math.min(b,start+DAYS-1);
+  return x<=y?{left:pct(x-start),width:pct(y-x+1),days:y-x+1,fromEarlier:a<start,toLater:b>start+DAYS-1}:null;
  };
- const pct=n=>(100*n/DAYS_PER_SHEET).toFixed(5);
- const today=new Date();
- const todayN=Math.floor(Date.UTC(today.getFullYear(),today.getMonth(),today.getDate())/86400000);
- const printed=today.toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'});
- const part=(from,to,windowStart)=>{
-  if(from===null||to===null||from>to)return null;
-  const lo=Math.max(from,windowStart),hi=Math.min(to,windowStart+DAYS_PER_SHEET-1);
-  return lo<=hi?{left:pct(lo-windowStart),width:pct(hi-lo+1)}:null;
- };
- const gridColors=Array.from({length:DAYS_PER_SHEET},(_,day)=>
-  `<span class="pt-cell ${Math.floor(day/7)%2?'pt-white':'pt-blue'} ${day%7===0?'pt-week-start':''}"></span>`
- ).join('');
- let sheets=[],sheetIndex=0;
- for(let weekPage=0;weekPage<weekSheets;weekPage++){
-  const pageStart=d.lo+weekPage*DAYS_PER_SHEET,pageEnd=pageStart+DAYS_PER_SHEET-1;
-  const weekHead=Array.from({length:WEEKS_PER_SHEET},(_,w)=>{
-   const monday=pageStart+w*7,date=new Date(monday*86400000);
-   const weekInfoForDate=weekInfo(new Date(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate()));
-   return `<div class="pt-week ${w%2?'pt-white':'pt-blue'}"><strong>Semana ${weekInfoForDate.week}</strong><small>${fmtShort(monday)} – ${fmtShort(monday+6)}</small></div>`;
-  }).join('');
-  const dayHead=Array.from({length:DAYS_PER_SHEET},(_,i)=>{
-   const n=pageStart+i,date=new Date(n*86400000);
-   return `<div class="pt-day ${Math.floor(i/7)%2?'pt-white':'pt-blue'} ${todayN===n?'pt-today':''}" title="${fmtISO(n)}"><span>${dayNames[i%7]}</span><strong>${String(date.getUTCDate()).padStart(2,'0')}</strong></div>`;
-  }).join('');
-  const todayLine=todayN>=pageStart&&todayN<=pageEnd?
-   `<span class="pt-today-line" style="left:${pct(todayN-pageStart+.5)}%"></span>`:'';
-  for(let activityPage=0;activityPage<activitySheets;activityPage++){
-   const begin=activityPage*ROWS_PER_SHEET,selected=tasks.slice(begin,begin+ROWS_PER_SHEET);
-   const rows=selected.map(t=>{
-    const st=status(t),built=st!=='Terminado'&&st!=='Por empezar'&&isBuilt(t);
-    const state=st==='Terminado'?'pt-finished':st==='Por empezar'?'pt-pending':built?'pt-built':'pt-active';
-    const plannedStart=d.valid(t.start)?d.day(t.start):null;
-    const plannedEnd=d.valid(t.end)?d.day(t.end):null;
-    const actual=d.valid(t.workCompletedDate)?d.day(t.workCompletedDate):null;
-    const projected=plannedStart!==null&&plannedEnd!==null&&plannedEnd>=plannedStart;
-    const initial=projected?plannedStart:actual,final=projected?plannedEnd:actual;
-    const scheduled=part(initial,final,pageStart);
-    const delayed=projected&&actual!==null&&actual>plannedEnd?
-     part(plannedEnd+1,actual,pageStart):null;
+ const records=tasks.map(t=>{
+  const a=d.valid(t.start)?d.day(t.start):null,b=d.valid(t.end)?d.day(t.end):null;
+  const real=d.valid(t.workCompletedDate)?d.day(t.workCompletedDate):null;
+  const planned=a!==null&&b!==null&&b>=a;
+  return {t,from:planned?a:real!==null?real:d.lo,to:planned?b:real!==null?real:d.lo,
+   real,delayStart:planned&&real!==null&&real>b?b+1:null,
+   delayEnd:planned&&real!==null&&real>b?real:null,undated:!planned&&real===null};
+ });
+ const weeksCount=Math.max(1,Math.ceil(d.weeks.length/WEEKS)),pages=[];
+ for(let block=0;block<weeksCount;block++){
+  const from=d.lo+block*DAYS,to=from+DAYS-1;
+  const visible=records.filter(r=>clip(r.from,r.to,from)||clip(r.delayStart,r.delayEnd,from));
+  const parts=Math.max(1,Math.ceil(visible.length/MAX_ROWS));
+  for(let part=0;part<parts;part++){
+   const chosen=visible.slice(part*MAX_ROWS,(part+1)*MAX_ROWS);
+   const rowHeight=chosen.length<=15?8.7:chosen.length<=18?7.5:chosen.length<=20?6.7:6.15;
+   const weekHeader=Array.from({length:WEEKS},(_,n)=>{
+    const first=from+n*7,monday=new Date(first*dayMS);
+    const wk=weekInfo(new Date(monday.getUTCFullYear(),monday.getUTCMonth(),monday.getUTCDate()));
+    return `<div class="rp-week rp-${n%2?'white':'blue'}">Sem-${wk.week}</div>`;
+   }).join('');
+   const days=Array.from({length:DAYS},(_,i)=>{
+    const day=from+i,dt=new Date(day*dayMS);
+    return `<div class="rp-day rp-${Math.floor(i/7)%2?'white':'blue'} ${day===todayDay?'rp-today-date':''}"><span>${weekdays[i%7]} ${String(dt.getUTCDate()).padStart(2,'0')}</span></div>`;
+   }).join('');
+   const bg=Array.from({length:DAYS},(_,i)=>`<span class="rp-cell rp-${Math.floor(i/7)%2?'white':'blue'} ${i%7===0?'rp-week-edge':''}"></span>`).join('');
+   const rows=chosen.map(r=>{
+    const t=r.t,main=clip(r.from,r.to,from),overrun=clip(r.delayStart,r.delayEnd,from);
+    const st=status(t),done=st==='Terminado',pending=st==='Por empezar',built=!done&&!pending&&isBuilt(t);
+    const cls=done?'rp-finished':pending?'rp-pending':built?'rp-built':'rp-active';
+    const verified=!!t.steps?.[4];
+    const dot=verified?'rp-verified-dot':done?'rp-done-dot':pending?'rp-pending-dot':'rp-active-dot';
     const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
-    const bar=scheduled?`<div class="pt-bar ${state}" style="left:${scheduled.left}%;width:${scheduled.width}%" title="${esc(t.annex)}: ${esc(t.title)} · Obra ${progress}%"><span class="pt-bar-progress"><span style="width:${progress}%"></span></span></div>`:'';
-    const delayBar=delayed?`<div class="pt-delay" style="left:${delayed.left}%;width:${delayed.width}%" title="Retraso: final proyectado ${esc(t.end)}; fin real ${esc(t.workCompletedDate)}"></div>`:'';
-    const actualMarker=actual!==null&&actual>=pageStart&&actual<=pageEnd?
-     `<span class="pt-actual" style="left:${pct(actual-pageStart+.5)}%" title="Fin de obra real: ${esc(t.workCompletedDate)}">◆</span>`:'';
-    const labelTitle=esc(t.title||'Actividad sin nombre');
-    return `<div class="pt-row"><div class="pt-activity" title="${esc(t.annex)} · ${labelTitle}"><span class="pt-dot ${state}"></span><strong class="pt-annex">${esc(t.annex)}</strong><span class="pt-activity-title">${labelTitle}</span><span class="pt-pct">${progress}%</span></div><div class="pt-track"><div class="pt-cell-grid">${gridColors}</div>${delayBar}${bar}${actualMarker}${todayLine}</div></div>`;
-   }).join('')||'<div class="pt-empty">No hay actividades registradas.</div>';
-   sheetIndex++;
-   const first=selected.length?begin+1:0,last=begin+selected.length;
-   sheets.push(`<section class="pt-sheet">
-    <div class="pt-heading">
-     <div><h1>DYDEM · Cronograma de obra</h1><p>Periodo: ${fmtShort(pageStart)} – ${fmtShort(pageEnd)} · 4 semanas por hoja</p></div>
-     <div class="pt-heading-right">Bloque semanal ${weekPage+1} de ${weekSheets}<br>Generado ${esc(printed)}</div>
+    const continuing=main&&(main.fromEarlier||main.toLater);
+    const annex=main?.days===1?String(t.annex||'').split('_')[0]:String(t.annex||'');
+    const name=String(t.title||'Sin descripción'),short=main?.days<=2;
+    const label=`<span class="rp-dot ${dot}"></span><b class="rp-annex">${esc(annex)}</b>${short?'':`<span class="rp-name">${esc(name)}</span>`}`;
+    const bar=main?`<div class="rp-bar ${cls} ${short?'rp-short':''} ${main.days===1?'rp-tiny':''} ${main.fromEarlier?'rp-from-previous':''} ${main.toLater?'rp-to-next':''}" style="left:${main.left}%;width:${main.width}%" title="${esc(t.annex)} · ${esc(name)} · ${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')} · ${progress}%">
+      <div class="rp-bar-label">${label}</div><span class="rp-progress"><span style="width:${progress}%"></span></span>
+    </div>`:'';
+    const late=overrun?`<div class="rp-delay ${overrun.fromEarlier?'rp-from-previous':''} ${overrun.toLater?'rp-to-next':''}" style="left:${overrun.left}%;width:${overrun.width}%" title="Retraso: ${esc(t.annex)} · ${esc(t.workCompletedDate||'')}"></div>`:'';
+    const actual=r.real!==null&&r.real>=from&&r.real<=to?
+      `<span class="rp-actual" style="left:${pct(r.real-from+.5)}%" title="Fin real: ${esc(t.workCompletedDate)}">◆</span>`:'';
+    const missing=r.undated?'<span class="rp-undated-label">Sin fechas</span>':'';
+    return `<div class="rp-row" data-activity="${esc(t.id)}"><div class="rp-cells">${bg}</div>${late}${bar}${actual}${missing}</div>`;
+   }).join('');
+   const todayLine=todayDay>=from&&todayDay<=to?`<span class="rp-today-line" style="left:${pct(todayDay-from+.5)}%"><b>HOY</b></span>`:'';
+   const number=pages.length+1;
+   const footerCount=chosen.length?`Actividades ${part*MAX_ROWS+1}–${part*MAX_ROWS+chosen.length} de ${visible.length} en este periodo`:'Sin actividades programadas en este periodo';
+   const more=parts>1?` · Grupo ${part+1} de ${parts}`:'';
+   pages.push(`<section class="rp-sheet" style="--rp-row-height:${rowHeight}mm">
+    <header class="rp-heading"><div><h1>DYDEM · Cronograma de obra</h1><p>Periodo: ${fDate(from)} – ${fDate(to)} · 4 semanas por hoja</p></div>
+    <div class="rp-info">Bloque semanal ${block+1} de ${weeksCount}${more}<br>Generado ${esc(generated)}</div></header>
+    <div class="rp-board"><div class="rp-weeks">${weekHeader}</div><div class="rp-days">${days}</div>
+      <div class="rp-rows">${rows||'<div class="rp-no-activities">No hay actividades programadas en estas cuatro semanas.</div>'}</div>
+      ${todayLine}
     </div>
-    <div class="pt-calendar">
-     <div class="pt-calendar-heading"><div class="pt-activity-heading">ANEXO · ACTIVIDAD <span>% obra</span></div><div class="pt-time-heading"><div class="pt-weeks">${weekHead}</div><div class="pt-days">${dayHead}</div></div></div>
-     <div class="pt-row-list">${rows}</div>
-    </div>
-    <div class="pt-footer"><span><b class="pt-legend-dot pt-pending"></b> Por empezar <b class="pt-legend-dot pt-active"></b> En proceso <b class="pt-legend-dot pt-built"></b> Obra terminada <b class="pt-legend-dot pt-finished"></b> Finalizado <b class="pt-delay-swatch"></b> Retraso</span><span>Actividades ${first}–${last} de ${tasks.length} · Página ${sheetIndex} de ${totalSheets}</span></div>
+    <footer class="rp-footer"><div class="rp-legend">
+     <span><i class="rp-pending-dot"></i>Por empezar</span>
+     <span><i class="rp-active-dot"></i>En proceso</span>
+     <span><i class="rp-done-dot"></i>Obra terminada</span>
+     <span><i class="rp-finished-key"></i>Finalizado</span>
+     <span><i class="rp-delay-key"></i>Retraso</span>
+    </div><span>${footerCount} · Página ${number} de __TOTAL__</span></footer>
    </section>`);
   }
  }
  const css=`
  @page{size:A4 landscape;margin:7mm}
  *{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
- html,body{margin:0!important;padding:0!important;background:#fff!important;font-family:Arial,Helvetica,sans-serif;color:#172236}
- .pt-sheet{width:100%;height:194mm;max-height:194mm;display:flex;flex-direction:column;overflow:hidden;break-inside:avoid;page-break-inside:avoid;background:white}
- .pt-sheet:not(:last-child){break-after:page;page-break-after:always}
- .pt-heading{height:16mm;flex:none;display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #a5afbd;padding:0 0 1.5mm;gap:6mm}
- .pt-heading h1{font-size:15pt;line-height:1.15;color:#1b2d49;margin:0 0 1mm}
- .pt-heading p{font-size:9pt;line-height:1.2;margin:0}
- .pt-heading-right{text-align:right;font-size:8.2pt;line-height:1.45;color:#506075;white-space:nowrap}
- .pt-calendar{display:flex;flex-direction:column;flex:1;min-height:0;margin-top:1.5mm;border:1px solid #8896a7;overflow:hidden}
- .pt-calendar-heading{display:grid;grid-template-columns:56mm minmax(0,1fr);height:16mm;flex:none;border-bottom:1px solid #8494a8}
- .pt-activity-heading{border-right:1px solid #8494a8;background:#e6edf5;font-size:9pt;font-weight:700;padding:6mm 1.8mm 0;white-space:nowrap}
- .pt-activity-heading span{float:right;color:#57677c;font-size:7pt;font-weight:400}
- .pt-time-heading{display:flex;flex-direction:column;min-width:0;overflow:hidden}
- .pt-weeks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));height:8mm;flex:none}
- .pt-week{border-right:1px solid #8192a6;display:flex;justify-content:space-between;align-items:center;gap:2px;padding:0 2mm;white-space:nowrap}
- .pt-week strong{font-size:9pt}.pt-week small{font-size:6.6pt;color:#435468}
- .pt-days{display:grid;grid-template-columns:repeat(28,minmax(0,1fr));height:8mm;flex:none}
- .pt-day{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;border-right:.5px solid #9eabb9;line-height:1.1}
- .pt-day span{font-size:6.4pt;color:#42536b}.pt-day strong{font-size:8.3pt}
- .pt-day:nth-child(7n+1){border-left:1px solid #65748a}
- .pt-day.pt-today{background:#81d6b0!important;color:#063d25!important}
- .pt-blue{background:#dbeeff}.pt-white{background:#fff}
- .pt-row-list{display:flex;flex-direction:column;flex:1;min-height:0}
- .pt-row{display:grid;grid-template-columns:56mm minmax(0,1fr);flex:1 1 0;max-height:12.5mm;min-height:0;border-bottom:.45px solid #b5c0ce;break-inside:avoid}
- .pt-row:last-child{border-bottom:0}
- .pt-activity{background:#f8fafc;border-right:1px solid #8797a9;display:flex;align-items:center;gap:1.2mm;padding:0 1.2mm;min-width:0;overflow:hidden;white-space:nowrap}
- .pt-dot{width:2.6mm;height:2.6mm;border-radius:50%;border:1px solid #fff;flex:none}
- .pt-annex{font-size:8.5pt;flex:none;background:white;border-radius:2px;padding:1px 2px}
- .pt-activity-title{font-size:8.1pt;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
- .pt-pct{font-size:7.6pt;color:#334b68;flex:none;text-align:right;font-weight:700}
- .pt-track{position:relative;min-width:0;overflow:hidden}
- .pt-cell-grid{position:absolute;inset:0;display:grid;grid-template-columns:repeat(28,minmax(0,1fr))}
- .pt-cell{min-width:0;border-right:.45px solid #a7b3c0}
- .pt-cell.pt-week-start{border-left:1px solid #8292a5}
- .pt-bar{position:absolute;top:1mm;bottom:1mm;border:1.1pt solid #3c79bb;border-radius:3px;background:#b9dbff;z-index:3;overflow:hidden;min-width:0}
- .pt-bar-progress{position:absolute;left:1px;right:1px;bottom:1px;height:1.8mm;background:rgba(255,255,255,.7);border-radius:2px;overflow:hidden}
- .pt-bar-progress>span{display:block;height:100%;background:#2871ba}
- .pt-bar.pt-pending{border-color:#df383b;background:#ffd69c}
- .pt-bar.pt-pending .pt-bar-progress>span{background:#d92f32}
- .pt-bar.pt-finished{border-color:#16985a;background:#c5f0d3}
- .pt-bar.pt-finished .pt-bar-progress>span{background:#16985a}
- .pt-bar.pt-built{border-color:#2871ba;background:#b9dbff}
- .pt-bar.pt-built .pt-bar-progress>span{background:#327bc7}
- .pt-bar.pt-active{border-color:#6487aa;background:#d4e8ff}
- .pt-dot.pt-pending,.pt-legend-dot.pt-pending{background:#e34848}
- .pt-dot.pt-active,.pt-legend-dot.pt-active{background:#f2c230}
- .pt-dot.pt-built,.pt-legend-dot.pt-built{background:#327bc7}
- .pt-dot.pt-finished,.pt-legend-dot.pt-finished{background:#18a566}
- .pt-delay{position:absolute;top:1mm;bottom:1mm;background:#ee9da2;border:1px dashed #b12e3d;z-index:2;min-width:0}
- .pt-actual{position:absolute;z-index:5;top:0;transform:translateX(-50%);font-size:8pt;color:#b22637;line-height:1}
- .pt-today-line{position:absolute;top:0;bottom:0;border-left:1.5pt solid #02a85b;z-index:4;pointer-events:none}
- .pt-footer{height:8mm;display:flex;justify-content:space-between;align-items:center;gap:4mm;font-size:7.4pt;flex:none;color:#43536a}
- .pt-footer>span:last-child{white-space:nowrap}
- .pt-legend-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin:0 2px 0 8px}
- .pt-legend-dot:first-child{margin-left:0}
- .pt-delay-swatch{display:inline-block;width:10px;height:5px;background:#ee9da2;border:1px solid #b12e3d;margin:0 3px 0 8px}
- .pt-empty{font-size:11pt;padding:12mm;text-align:center;color:#6a7280}
- @media screen{.pt-sheet{margin:0 auto 10mm;border:1px solid #a3b0bf;box-shadow:0 2px 8px #ced6df}}
+ html,body{margin:0!important;padding:0!important;background:#fff!important;color:#1a293e;font-family:Arial,Helvetica,sans-serif}
+ .rp-sheet{height:196mm;width:283mm;max-height:196mm;overflow:hidden;position:relative;background:#fff;page-break-inside:avoid;break-inside:avoid}
+ .rp-sheet:not(:last-child){page-break-after:always;break-after:page}
+ .rp-heading{height:17mm;display:flex;align-items:flex-start;justify-content:space-between;gap:7mm;padding-top:.7mm}
+ .rp-heading h1{font-weight:700;font-size:15pt;line-height:1.2;margin:0 0 1.5mm}
+ .rp-heading p{font-size:9.6pt;line-height:1.25;margin:0}
+ .rp-info{text-align:right;white-space:nowrap;font-size:8.2pt;line-height:1.6;color:#526176;margin-top:.7mm}
+ .rp-board{position:relative;margin-top:14mm;width:100%;overflow:hidden}
+ .rp-weeks,.rp-days{display:grid;grid-template-columns:repeat(28,minmax(0,1fr));width:100%}
+ .rp-weeks{height:8mm}
+ .rp-week{grid-column:span 7;border-right:.6px solid #8895a7;border-left:.5px solid #a6b3c2;padding:.8mm 1.1mm;display:flex;align-items:flex-start;font-size:10pt;color:#24354c}
+ .rp-days{height:10mm}
+ .rp-day{border-right:.4px solid #a6b4c0;display:flex;justify-content:flex-start;align-items:flex-end;min-width:0;white-space:nowrap;padding:0 .75mm 2.5mm;line-height:1.1;color:#526278}
+ .rp-day span{font-size:6.8pt;overflow:hidden;text-overflow:clip;white-space:nowrap}
+ .rp-day:nth-child(7n+1){border-left:1px solid #8a9caf}
+ .rp-today-date{background:#abf1d2!important}
+ .rp-blue{background:#dbeeff}.rp-white{background:white}
+ .rp-rows{position:relative;width:100%}
+ .rp-row{position:relative;height:var(--rp-row-height);width:100%;overflow:hidden}
+ .rp-cells{position:absolute;inset:0;display:grid;grid-template-columns:repeat(28,minmax(0,1fr))}
+ .rp-cell{min-width:0;border-right:.4px solid #b3becc}
+ .rp-cell.rp-week-edge{border-left:1px solid #97a8b9}
+ .rp-bar{position:absolute;top:.8mm;bottom:.8mm;z-index:2;border:1pt solid #568bc0;background:#b9ddff;border-radius:2.2mm;overflow:hidden;min-width:0;padding:0 .6mm}
+ .rp-bar.rp-pending{background:#ffdba5;border-color:#e3a473}
+ .rp-bar.rp-active{background:#b9dcff;border-color:#5e92c2}
+ .rp-bar.rp-built{background:#b9dcff;border-color:#5e92c2}
+ .rp-bar.rp-finished{background:#c6eed5;border-color:#189458}
+ .rp-bar.rp-from-previous{border-left:0;border-top-left-radius:0;border-bottom-left-radius:0}
+ .rp-bar.rp-to-next{border-right:0;border-top-right-radius:0;border-bottom-right-radius:0}
+ .rp-bar-label{height:calc(100% - 1.15mm);display:flex;align-items:center;min-width:0;gap:1mm;overflow:hidden;white-space:nowrap;font-size:7.4pt;font-weight:700;line-height:1.1}
+ .rp-dot,.rp-legend i{width:2.8mm;height:2.8mm;display:inline-block;border-radius:50%;flex:none}
+ .rp-dot{border:.3mm solid #fff;box-shadow:0 0 0 .2mm rgba(50,75,103,.2)}
+ .rp-pending-dot{background:#e64c51}
+ .rp-active-dot{background:#f1c332}
+ .rp-done-dot{background:#367ec9}
+ .rp-verified-dot{background:#8b50ce}
+ .rp-finished-key{background:#17a66b}
+ .rp-annex{background:rgba(255,255,255,.93);font-size:7.1pt;padding:.4mm .6mm;border-radius:.7mm;white-space:nowrap;flex:none;color:#16253a}
+ .rp-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+ .rp-short .rp-annex{font-size:6.7pt;padding:.35mm .35mm}
+ .rp-tiny .rp-bar-label{gap:.2mm}
+ .rp-tiny .rp-dot{width:2.1mm;height:2.1mm}
+ .rp-progress{position:absolute;bottom:.5mm;left:1mm;right:1mm;height:1.1mm;border-radius:.7mm;background:rgba(255,255,255,.85);overflow:hidden}
+ .rp-progress>span{display:block;height:100%;background:#317bcc;border-radius:.7mm}
+ .rp-pending .rp-progress>span{background:#e88050}
+ .rp-finished .rp-progress>span{background:#17a66b}
+ .rp-delay{position:absolute;z-index:1;top:.8mm;bottom:.8mm;border:1px dashed #a94254;border-radius:1.5mm;background:#ed9faa}
+ .rp-actual{position:absolute;z-index:5;top:.2mm;transform:translateX(-50%);font-size:8pt;color:#b22f38}
+ .rp-today-line{position:absolute;top:18mm;bottom:0;border-left:1.3pt solid #06ab63;z-index:5;pointer-events:none;overflow:visible}
+ .rp-today-line>b{position:absolute;left:0;top:-3mm;transform:translateX(-50%);background:#00ae68;color:white;font-weight:800;font-size:7.8pt;padding:1.15mm 1.5mm;border-radius:1.2mm;white-space:nowrap}
+ .rp-no-activities{height:15mm;font-size:9pt;color:#6c7a8b;padding:5mm 2mm;text-align:center;background:#f7faff}
+ .rp-undated-label{position:absolute;left:13mm;top:1.4mm;font-size:6.2pt;color:#4e5b6d}
+ .rp-footer{position:absolute;bottom:3.2mm;left:0;right:0;display:flex;justify-content:space-between;align-items:center;gap:5mm;color:#46556a;font-size:7.3pt}
+ .rp-footer>span{white-space:nowrap}
+ .rp-legend{display:flex;flex-wrap:wrap;align-items:center;gap:2.7mm}
+ .rp-legend span{display:inline-flex;align-items:center;gap:.9mm;white-space:nowrap}
+ .rp-legend i{height:2mm;width:2mm}
+ .rp-legend i.rp-delay-key{height:1.3mm;width:3.2mm;border:.4px solid #9f4150;background:#ed9faa;border-radius:0}
+ @media screen{.rp-sheet{margin:0 auto 7mm;outline:1px solid #d5dce5;box-shadow:0 3px 12px #e0e6ed}}
  `;
- printWindow('DYDEM - Cronograma de obra · 4 semanas por hoja',sheets.join(''),css,true);
+ printWindow('DYDEM - Cronograma de obra · 4 semanas por hoja',pages.join('').replaceAll('__TOTAL__',String(pages.length)),css,true);
 }
 $('pdf').onclick=pdf;$('pdf-timeline').onclick=pdfTimeline;
 // Arranque sin datos de ejemplo: la base de datos es la fuente única de verdad.
