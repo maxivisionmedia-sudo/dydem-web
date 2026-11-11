@@ -818,15 +818,27 @@ async function editStep(t,i){
   modal(`${names[i]} · Actividad ${t.annex}`,'Puedes asignar a cualquier usuario activo de DYDEM. Solo los responsables asignados podrán aprobar usando su propia cuenta.',fields,{type:'assign',id:t.id,step:i});
   return;
  }
+ if(i===0){
+  if(!isAdmin())return;
+  modal(`Propuesta · Actividad ${t.annex}`,
+   'Archivos opcionales de Propuesta. No cuentan como Evidencia ni alteran el porcentaje de avance.',
+   `<div class="field"><label>Agregar archivos de Propuesta</label><input type="file" id="attachments-input" multiple>
+   <p class="attachment-upload-help">Límite de DYDEM: 500 MB por archivo. Límite actual de Supabase Storage: 50 MB por archivo. Los archivos se registran antes de transferirse y se verifican al concluir.</p>
+   <span id="attachment-upload-status" role="status"></span></div><div id="attachment-list">${attachmentList(t,'proposal')}</div>`,
+   {type:'proposal-files',id:t.id,step:0});
+  return;
+ }
  if(i===5){
   modal(`Evidencia · Actividad ${t.annex}`,canAddDocument()?'Añade archivos para acreditar la actividad. La Evidencia es obligatoria para finalizar.':'Puedes quitar archivos existentes; no tienes permiso para subir archivos.',
   `${canAddDocument()?`<div class="field"><label>Agregar archivos</label><input type="file" id="attachments-input" multiple><p class="attachment-upload-help">Máximo de DYDEM: 500 MB por archivo. El almacenamiento actual de Supabase admite hasta 50 MB por archivo. DYDEM registra cada carga antes de enviarla y verifica su aparición en la actividad al finalizar. No cierres la ventana hasta recibir la confirmación.</p><span id="attachment-upload-status" role="status"></span></div>`:''}<div id="attachment-list">${attachmentList(t)}</div>`,
   {type:'files',id:t.id,step:i});
  }
 }
-function attachmentList(t){
- const files=t.attachments.map(a=>`<div class="attachment">${attachmentActions(t,a)}${canDeleteDocument()?`<button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button>`:''}</div>`).join('');
- const pending=pendingForActivity(t.id).map(a=>`<div class="attachment pending-attachment"><span class="pending-attachment-info">⏳ <b>${esc(a.file_name)}</b><small> Pendiente: ${a.last_error?'No se pudo confirmar.':'Se recuperará automáticamente cuando esté completo.'} ${esc(a.last_error||'')}</small></span>${canAddDocument()?`<button type="button" class="btn secondary" data-recover-upload="${esc(a.id)}" data-id="${t.id}">Comprobar</button>`:''}</div>`).join('');
+function attachmentList(t,section='evidence'){
+ const proposal=section==='proposal',saved=proposal?t.proposalAttachments:t.attachments;
+ const mayAdd=proposal?isAdmin():canAddDocument(),mayDelete=proposal?isAdmin():canDeleteDocument();
+ const files=(saved||[]).map(a=>`<div class="attachment">${attachmentActions(t,a)}${mayDelete?`<button type="button" class="btn danger" data-remove-file="${esc(a.id)}" data-id="${t.id}">Quitar</button>`:''}</div>`).join('');
+ const pending=pendingForActivity(t.id,section).map(a=>`<div class="attachment pending-attachment"><span class="pending-attachment-info">⏳ <b>${esc(a.file_name)}</b><small> Pendiente: ${a.last_error?'No se pudo confirmar.':'Se recuperará automáticamente cuando esté completo.'} ${esc(a.last_error||'')}</small></span>${mayAdd?`<button type="button" class="btn secondary" data-recover-upload="${esc(a.id)}" data-id="${t.id}">Comprobar</button>`:''}</div>`).join('');
  return (files+pending)||'<span class="muted">No hay archivos adjuntos.</span>';
 }
 function canCheck(t,i){
@@ -843,7 +855,7 @@ function uncheck(t,i){t.steps[i]=false}
 function linkError(t,field,value){if(!value)return '';if(String(value)===String(t.id))return 'No se puede enlazar una actividad consigo misma.';if(field==='before'&&String(t.after)===String(value)||field==='after'&&String(t.before)===String(value))return 'Las dos dependencias no pueden apuntar a la misma actividad.';let next=task(value),seen=new Set([t.id]);while(next){if(seen.has(next.id))return 'Esta relación crearía un ciclo de dependencias.';seen.add(next.id);next=task(field==='before'?next.before:next.after)}return ''}
 // Storage privado de Supabase. metadata.path pertenece al bucket; nunca al navegador.
 async function putFile(t,file,intent){
- if(!canAddDocument())throw Error('Sin permisos para adjuntar archivos');
+ if(intent?.section==='proposal'?!isAdmin():!canAddDocument())throw Error('Sin permisos para adjuntar archivos');
  if(file.size>MAX_ATTACHMENT_BYTES)throw Error('No se permite subir archivos de más de 500 MB.');
  if(file.size>CURRENT_STORAGE_LIMIT_BYTES)throw Error('El archivo supera los 50 MB permitidos actualmente por el almacenamiento de Supabase. El máximo de la aplicación es 500 MB, pero el proyecto requiere ampliar su límite de Storage.');
  if(!intent?.id||!intent?.path)throw Error('Falta el registro previo de la carga');
@@ -982,7 +994,7 @@ async function confirmUploadedAttachment(t,intent){
  return next;
 }
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
-async function deleteFile(meta){if(!canDeleteDocument())throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
+async function deleteFile(meta,section='evidence'){if(section==='proposal'?!isAdmin():!canDeleteDocument())throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
 $('board').addEventListener('click',async e=>{
  const target=e.target.closest('button[data-jump-timeline]');
  if(target){jumpToTimeline(target.dataset.jumpTimeline);return}
@@ -1235,14 +1247,14 @@ $('modal-fields').addEventListener('click',async e=>{
 document.addEventListener('click',async e=>{
  const open=e.target.closest('[data-preview]');
  if(open){
-  e.preventDefault();const t=task(open.dataset.id),meta=t?.attachments.find(x=>x.id===open.dataset.preview);
+  e.preventDefault();const t=task(open.dataset.id),meta=[...(t?.attachments||[]),...(t?.proposalAttachments||[])].find(x=>x.id===open.dataset.preview);
   if(meta)await previewAttachment(t,meta);
   return;
  }
  const a=e.target.closest('[data-download]');
  if(!a)return;
  e.preventDefault();
- const t=task(a.dataset.id),meta=t?.attachments.find(x=>x.id===a.dataset.download);
+ const t=task(a.dataset.id),meta=[...(t?.attachments||[]),...(t?.proposalAttachments||[])].find(x=>x.id===a.dataset.download);
  if(!meta)return;
  try{
   const signed=await signedAttachmentUrl(meta),url=new URL(signed);
