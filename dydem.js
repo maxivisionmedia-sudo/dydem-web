@@ -128,9 +128,25 @@ async function edgeErrorMessage(err){
 }
 function connectionConfig(){const cfg=window.DYDEM_CONFIG||{};if(!cfg.url||!/^https:\/\/[^/]+/.test(cfg.url)||!cfg.anonKey||cfg.anonKey.includes('REEMPLAZAR')||!window.supabase?.createClient)return null;return cfg}
 function showSetupError(){const el=$('access-error');$('access-help').textContent='La instalación todavía no está conectada a Supabase.';el.textContent='Configura site/config.js con la URL y la clave pública del proyecto. Después publica el sitio por HTTPS. Consulta INSTRUCCIONES.md.';$('access-submit').disabled=true}
-function enterAccount(profile){currentAccount={...profile,name:profile.display_name||profile.email||'Usuario'};$('add').hidden=!canAddActivity();$('save').hidden=!canEditAnyStep();document.body.classList.add('signed-in');document.body.classList.toggle('viewer-mode',!isAdmin()&&!isCustom());document.body.classList.toggle('custom-mode',isCustom());if(recoverMode)showRecoveryForm();else {$('access-gate').hidden=true;$('reset-container').hidden=true;}$('session-label').textContent=currentAccount.name+' · '+roleLabel(currentAccount.role);$('manage-users').hidden=!isAdmin();$('user-management').hidden=true;render();}
-async function loadAccount(){const {data:sessionData,error:sessionError}=await cloud.auth.getSession();if(sessionError)throw sessionError;const user=sessionData.session?.user;if(!user){await leaveAccount(false);return}const {data:profile,error}=await cloud.from('profiles').select('id,email,display_name,role,permissions,active').eq('id',user.id).single();if(error||!profile||!profile.active){await cloud.auth.signOut();throw Error('Esta cuenta no tiene acceso activo a DYDEM. Consulta a un administrador.')}enterAccount(profile);await reloadActivities(true);startRealtime();if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
-async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;tasks=[];commentsByActivity.clear();pendingAttachmentIntents.clear();pendingFileRegistrations.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');$('access-gate').hidden=false;$('user-management').hidden=true;$('access-pass').value='';render();syncState('Sin sesión')}
+function enterAccount(profile){
+ const name=String(profile.display_name||profile.email||'Usuario').trim();
+ currentAccount={...profile,name};
+ const welcome=$('welcome-user');
+ if(welcome){welcome.textContent='Sesión iniciada como: '+name;welcome.hidden=false}
+ $('add').hidden=!canAddActivity();$('save').hidden=!canEditAnyStep();document.body.classList.add('signed-in');document.body.classList.toggle('viewer-mode',!isAdmin()&&!isCustom());document.body.classList.toggle('custom-mode',isCustom());if(recoverMode)showRecoveryForm();else {$('access-gate').hidden=true;$('reset-container').hidden=true;}$('session-label').textContent='Conectado: '+currentAccount.name+' · '+roleLabel(currentAccount.role);$('manage-users').hidden=!isAdmin();$('user-management').hidden=true;render();}
+async function loadAccount(){const {data:sessionData,error:sessionError}=await cloud.auth.getSession();if(sessionError)throw sessionError;const user=sessionData.session?.user;if(!user){await leaveAccount(false);return}const {data:profile,error}=await cloud.from('profiles').select('id,email,display_name,role,permissions,active').eq('id',user.id).single();if(error||!profile||!profile.active){await cloud.auth.signOut();throw Error('Esta cuenta no tiene acceso activo a DYDEM. Consulta a un administrador.')}
+ // Register last login and resolve a missing display_name from the account.
+ // The registered profile name always takes precedence over editable metadata.
+ let loginName=profile.display_name;
+ try{
+  const registration=await cloud.rpc('dydem_register_login');
+  if(registration.error)throw registration.error;
+  if(registration.data?.display_name)loginName=registration.data.display_name;
+ }catch(registrationError){
+  console.warn('No se pudo registrar la fecha de acceso:',messageError(registrationError));
+ }
+ enterAccount({...profile,display_name:loginName||user.user_metadata?.display_name||profile.email});await reloadActivities(true);startRealtime();if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
+async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;tasks=[];commentsByActivity.clear();pendingAttachmentIntents.clear();pendingFileRegistrations.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');if($('welcome-user')){$('welcome-user').textContent='';$('welcome-user').hidden=true}$('access-gate').hidden=false;$('user-management').hidden=true;$('access-pass').value='';render();syncState('Sin sesión')}
 function isDirty(){return tasks.some(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)))}
 async function reloadComments(){
  if(!isSignedIn())return;
@@ -212,14 +228,14 @@ $('change-password').onclick=()=>{
 $('cancel-password').onclick=()=>{storeSet(RECOVERY_PENDING_KEY,'0');showLoginForm();};
 async function showUsers(){
  if(!isAdmin())return;
- const {data,error}=await cloud.from('profiles').select('id,email,display_name,role,permissions,active').order('created_at',{ascending:true});
+ const {data,error}=await cloud.from('profiles').select('id,email,display_name,role,permissions,active,last_login_at,removed_at').is('removed_at',null).order('created_at',{ascending:true});
  if(error){$('user-error').textContent=messageError(error);return}
  $('user-list').innerHTML=(data||[]).map(a=>{
   const self=a.id===currentAccount.id, p=a.permissions||emptyPermissions();
   const opts=['viewer','custom','admin'].map(r=>`<option value="${r}" ${r===a.role?'selected':''}>${roleLabel(r)}</option>`).join('');
   return `<div class="user-entry">
-   <div class="user-summary"><b>${esc(a.display_name||a.email)}</b><span>${esc(a.email)} · ${roleLabel(a.role)} · ${a.active?'Activo':'Desactivado'}</span>${a.role==='custom'?`<small>${esc(permissionSummary(p))}</small>`:''}</div>
-   <div class="user-actions">${self?'<span class="muted">(sesión actual)</span>':`<button class="btn secondary" type="button" data-toggle-user="${esc(a.id)}" data-active="${a.active?'true':'false'}">${a.active?'Desactivar':'Reactivar'}</button><button class="btn secondary" type="button" data-configure-user="${esc(a.id)}">Configurar permisos</button>`}</div>
+   <div class="user-summary"><b>${esc(a.display_name||a.email)}</b><span>${esc(a.email)} · ${roleLabel(a.role)} · ${a.active?'Activo':'Desactivado'}</span><small>Último acceso: ${a.last_login_at?esc(new Date(a.last_login_at).toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'})):'Aún no registrado'}</small>${a.role==='custom'?`<small>${esc(permissionSummary(p))}</small>`:''}</div>
+   <div class="user-actions">${self?'<span class="muted">(sesión actual)</span>':`<button class="btn secondary" type="button" data-toggle-user="${esc(a.id)}" data-active="${a.active?'true':'false'}">${a.active?'Desactivar':'Reactivar'}</button><button class="btn secondary" type="button" data-configure-user="${esc(a.id)}">Configurar permisos</button><button class="btn danger user-remove-btn" type="button" data-remove-user="${esc(a.id)}" data-user-name="${esc(a.display_name||a.email)}">Remover usuario</button>`}</div>
    ${self?'':`<div class="user-permissions-editor" data-editor-user="${esc(a.id)}" hidden>
     <label>Tipo de permiso<select data-edit-role>${opts}</select></label>
     <fieldset class="permission-panel" data-edit-custom ${a.role==='custom'?'':'hidden'}><legend>Permitir modificar estas etapas</legend>${permissionChooser(a.id,p)}</fieldset>
@@ -347,10 +363,36 @@ $('user-list').addEventListener('change',e=>{
 });
 $('user-list').onclick=async e=>{
  const toggle=e.target.closest('[data-toggle-user]');
+ const remove=e.target.closest('button[data-remove-user]');
  const config=e.target.closest('[data-configure-user]');
  const cancel=e.target.closest('[data-cancel-user-permissions]');
  const submit=e.target.closest('[data-save-user-permissions]');
  if(!isAdmin())return;
+ if(remove){
+  const id=remove.dataset.removeUser,name=remove.dataset.userName||'este usuario';
+  if(id===currentAccount.id)return;
+  const warning='¿Remover a '+name+' de DYDEM?\n\n'
+    +'Perderá acceso y dejará de aparecer en la lista de usuarios.\n'
+    +'Se conservarán sus comentarios, aprobaciones y registros históricos.\n'
+    +'Las confirmaciones que aún tenga pendientes deben reasignarse primero.\n\n'
+    +'¿Confirmar?';
+  if(!confirm(warning))return;
+  remove.disabled=true;
+  $('user-error').textContent='Removiendo usuario…';
+  try{
+   const {data,error}=await cloud.rpc('dydem_remove_user',{p_user_id:id});
+   if(error)throw error;
+   if(!data?.ok)throw Error('No se confirmó la operación.');
+   $('user-error').textContent='Usuario removido de DYDEM. Se conservó el historial de obra.';
+   await showUsers();
+   try{await showReminderAdminSettings()}catch(e){console.warn(messageError(e))}
+   try{await loadResponsibleUsers();render()}catch(e){console.warn(messageError(e))}
+  }catch(err){
+   $('user-error').textContent='No se pudo remover al usuario: '+messageError(err);
+   remove.disabled=false;
+  }
+  return;
+ }
  if(config){const box=$('user-list').querySelector('[data-editor-user="'+config.dataset.configureUser+'"]');if(box)box.hidden=!box.hidden;return}
  if(cancel){const box=$('user-list').querySelector('[data-editor-user="'+cancel.dataset.cancelUserPermissions+'"]');if(box)box.hidden=true;return}
  if(submit){
