@@ -517,19 +517,24 @@ $('user-list').onclick=async e=>{
  if(remove){
   const id=remove.dataset.removeUser,name=remove.dataset.userName||'este usuario';
   if(id===currentAccount.id)return;
-  const warning='¿Remover a '+name+' de DYDEM?\n\n'
-    +'Perderá acceso y dejará de aparecer en la lista de usuarios.\n'
-    +'Se conservarán sus comentarios, aprobaciones y registros históricos.\n'
-    +'Las confirmaciones que aún tenga pendientes deben reasignarse primero.\n\n'
-    +'¿Confirmar?';
+  const warning='¿Eliminar definitivamente la cuenta de '+name+'?\n\n'
+    +'Se borrará su identidad de Supabase Auth y el correo quedará libre para crear una cuenta NUEVA.\n'
+    +'El usuario perderá sus contraseñas, sesiones y permisos anteriores.\n'
+    +'Se conservarán sus comentarios y registros históricos sin vincularlos a la nueva cuenta.\n'
+    +'Si tiene confirmaciones pendientes, primero deberás reasignarlas.\n\n'
+    +'¿Confirmar la eliminación?';
   if(!confirm(warning))return;
   remove.disabled=true;
   $('user-error').textContent='Removiendo usuario…';
   try{
-   const {data,error}=await cloud.rpc('dydem_remove_user',{p_user_id:id});
-   if(error)throw error;
-   if(!data?.ok)throw Error('No se confirmó la operación.');
-   $('user-error').textContent='Usuario removido de DYDEM. Se conservó el historial de obra.';
+   const {data,error}=await cloud.functions.invoke('manage-users',{
+    body:{action:'remove-user',user_id:id}
+   });
+   if(error)throw Error(await edgeErrorMessage(error));
+   if(data?.error)throw Error(data.error);
+   if(!data?.ok||!data?.deleted_from_auth||!data?.email_released)
+    throw Error('No se verificó la liberación del correo en Supabase.');
+   $('user-error').textContent='Cuenta eliminada de Supabase. El correo puede recibir una invitación como usuario completamente nuevo. Se conservó el historial de obra.';
    await showUsers();
    try{await showReminderAdminSettings()}catch(e){console.warn(messageError(e))}
    try{await loadResponsibleUsers();render()}catch(e){console.warn(messageError(e))}
