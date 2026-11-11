@@ -133,14 +133,14 @@ function isDirty(){return tasks.some(t=>JSON.stringify(t)!==lastSynced.get(Numbe
 async function reloadComments(){
  if(!isSignedIn())return;
  const {data,error}=await cloud.from('activity_comments')
-  .select('id,activity_id,body,created_at,author_id,author_name')
+  .select('id,activity_id,body,created_at,author_id,author_name,thread')
   .eq('project_id',PROJECT_ID).order('created_at',{ascending:true}).order('id',{ascending:true});
  if(error)throw error;
  const next=new Map();
  for(const item of (data||[])){
-  const id=Number(item.activity_id);
-  if(!next.has(id))next.set(id,[]);
-  next.get(id).push(item);
+  const key=(item.thread==='dudas'?'dudas':'notes')+':'+Number(item.activity_id);
+  if(!next.has(key))next.set(key,[]);
+  next.get(key).push(item);
  }
  commentsByActivity=next;
 }
@@ -401,15 +401,15 @@ function timelineData(){
 }
 function statusDot(t){const st=status(t);const verified=t.steps[4]===true;const color=verified?'#8747db':st==='Terminado'?'#18a566':st==='En proceso'?'#f2c230':'#e34848';const label=verified?'Verificación aprobada':st;return `<span class="activity-status-dot" style="background:${color}" title="${label}" aria-label="Estado: ${label}"></span>`}
 
-function commentsFor(id){return commentsByActivity.get(Number(id))||[]}
+function commentsFor(id,thread='notes'){return commentsByActivity.get((thread==='dudas'?'dudas':'notes')+':'+Number(id))||[]}
 function displayCommentTime(value){
  const date=new Date(value);
  return isNaN(date.getTime())?'':date.toLocaleString('es-MX',{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
 }
-function commentListHTML(t){
- const comments=commentsFor(t.id);
- if(!comments.length)return '<div class="comment-empty">Todavía no hay notas.</div>';
- return `<div class="comment-list">${comments.map(c=>`<article class="comment-item"><span class="comment-avatar" aria-hidden="true">👤</span><div class="comment-bubble"><div class="comment-meta"><b>${esc(c.author_name||'Usuario')}</b><time>${esc(displayCommentTime(c.created_at))}</time>${isAdmin()?`<button type="button" class="comment-delete" data-delete-comment="${Number(c.id)}" data-comment-activity="${Number(t.id)}" aria-label="Eliminar comentario" title="Eliminar este comentario">Eliminar</button>`:""}</div><div class="comment-text">${esc(c.body)}</div></div></article>`).join('')}</div>`;
+function commentListHTML(t,thread='notes'){
+ const comments=commentsFor(t.id,thread);
+ if(!comments.length)return `<div class="comment-empty">${thread==='dudas'?'Todavía no hay dudas.':'Todavía no hay notas.'}</div>`;
+ return `<div class="comment-list">${comments.map(c=>`<article class="comment-item"><span class="comment-avatar" aria-hidden="true">👤</span><div class="comment-bubble"><div class="comment-meta"><b>${esc(c.author_name||'Usuario')}</b><time>${esc(displayCommentTime(c.created_at))}</time>${isAdmin()?`<button type="button" class="comment-delete" data-delete-comment="${Number(c.id)}" data-comment-activity="${Number(t.id)}" data-comment-thread="${thread}" aria-label="Eliminar ${thread==='dudas'?'duda':'nota'}" title="Eliminar este mensaje">Eliminar</button>`:""}</div><div class="comment-text">${esc(c.body)}</div></div></article>`).join('')}</div>`;
 }
 function sectionIsOpen(id,name){return sectionOpen.get(name+':'+id)!==false}
 // Visible only when the activity is expanded. Uses the exact same delegated
@@ -417,11 +417,15 @@ function sectionIsOpen(id,name){return sectionOpen.get(name+':'+id)!==false}
 function returnToTimelineLink(t){
  return `<div class="activity-return-row"><button type="button" class="activity-return-link" data-jump-timeline="${t.id}" title="Localizar esta actividad en el cronograma">regresa al cronograma</button></div>`;
 }
-function commentsSection(t){
- const open=sectionIsOpen(t.id,'comments')?' open':'';
- const composer=canPostComment()?`<form class="comment-form" data-comment-form="${t.id}"><label class="comment-input-label" for="comment-input-${t.id}">Añade una nota</label><div class="comment-compose"><textarea id="comment-input-${t.id}" data-comment-input="${t.id}" maxlength="2000" rows="2" placeholder="Añade una nota" required>${esc(commentDrafts.get(Number(t.id))||'')}</textarea><button type="submit" class="btn comment-submit" aria-label="Publicar nota de la actividad ${esc(t.annex)}" title="Publicar nota">↑</button></div><span class="comment-feedback" data-comment-feedback="${t.id}" role="status"></span></form>`:`<p class="comment-readonly-note">Puedes consultar las notas. Tu permiso actual no permite publicar.</p>`;
- return `<details class="viewer-section comments-section" data-activity-section="${t.id}" data-section-kind="comments"${open}><summary>Notas <span class="comment-count">${commentsFor(t.id).length}</span></summary><div class="viewer-section-inner">${composer}<div data-comment-feed="${t.id}">${commentListHTML(t)}</div></div></details>`;
+function threadSection(t,thread='notes'){
+ const doubts=thread==='dudas',name=doubts?'Dudas':'Notas',kind=doubts?'dudas':'comments';
+ const open=sectionIsOpen(t.id,kind)?' open':'';
+ const key=thread+':'+Number(t.id);
+ const composer=canPostComment()?`<form class="comment-form" data-comment-form="${t.id}" data-comment-thread="${thread}"><label class="comment-input-label" for="comment-input-${thread}-${t.id}">${doubts?'Escribe una duda':'Añade una nota'}</label><div class="comment-compose"><textarea id="comment-input-${thread}-${t.id}" data-comment-input="${t.id}" data-comment-thread="${thread}" maxlength="2000" rows="2" placeholder="${doubts?'Escribe una duda para el equipo':'Añade una nota'}" required>${esc(commentDrafts.get(key)||'')}</textarea><button type="submit" class="btn comment-submit" aria-label="Publicar ${doubts?'duda':'nota'} de la actividad ${esc(t.annex)}" title="Publicar ${doubts?'duda':'nota'}">↑</button></div><span class="comment-feedback" data-comment-feedback="${t.id}" role="status"></span></form>`:`<p class="comment-readonly-note">Puedes leer ${doubts?'las dudas':'las notas'}, pero no publicar mensajes con tus permisos actuales.</p>`;
+ return `<details class="viewer-section comments-section ${doubts?'dudas-section':''}" data-activity-section="${t.id}" data-section-kind="${kind}"${open}><summary>${name} <span class="comment-count">${commentsFor(t.id,thread).length}</span></summary><div class="viewer-section-inner">${composer}<div data-comment-feed="${t.id}" data-comment-thread="${thread}">${commentListHTML(t,thread)}</div></div></details>`;
 }
+function commentsSection(t){return threadSection(t,'notes')}
+function dudasSection(t){return threadSection(t,'dudas')}
 function viewerLinkedActivity(value){
  if(!value)return 'Ninguna';
  const linked=task(value);
@@ -607,7 +611,7 @@ function viewerCard(t){
  const stageOpen=sectionIsOpen(t.id,'stages')?' open':'';
  const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
 
- const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span><strong>Progreso de Evidencia: ${evidencePct(t)}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}</span></div><div class="viewer-progress"><div style="width:${evidencePct(t)}%"></div></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
+ const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}${dudasSection(t)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span><strong>Progreso de Evidencia: ${evidencePct(t)}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}</span></div><div class="viewer-progress"><div style="width:${evidencePct(t)}%"></div></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
  return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`;
 }
 function isMobileTimeline(){return typeof window!=='undefined' && window.matchMedia('(max-width: 760px)').matches}
@@ -729,7 +733,7 @@ window.addEventListener('resize',()=>{
 });
 function render(){rememberOpenStages();const w=weekInfo();document.querySelector('header small').textContent=`CONTROL DE OBRA · SEMANA ${w.week} / ${w.year}`;document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;let q=$('search').value.toLowerCase();const counts={'Por empezar':0,'En proceso':0,'Terminado':0};tasks.forEach(t=>counts[status(t)]++);$('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];$('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];$('board').innerHTML=['Por empezar','En proceso','Terminado'].map(st=>{const list=tasks.filter(t=>status(t)===st&&(`${t.id} ${t.title}`).toLowerCase().includes(q));return `<section class="column"><h2>${st} (${counts[st]})</h2>${list.length?list.map(card).join(''):'<div class="empty">Sin actividades</div>'}</section>`}).join('');setTimelineButtonLabel();$('timeline').innerHTML=timelineHTML(false,compactTimeline,isMobileTimeline());showSelectedActivity();}
 function hybridReadOnlyStage(t,i){
- if(approvalStageKey(i)!==null)return `<div class="hybrid-readonly-step" data-step-readonly="${i}"><b class="hybrid-read-label">${i+1}. ${esc(names[i])}:</b><div class="hybrid-read-value">${approvalStageSummary(t,i)}</div></div>`;
+ if(approvalStageKey(i)!==null)return `<div class="hybrid-readonly-step" data-step-readonly="${i}"><b class="hybrid-read-label">${i+1}. ${esc(names[i])}:</b><div class="hybrid-read-value">${approvalStageSummary(t,i)}${i===1?dudasSection(t):''}</div></div>`;
  const pct=value=>Math.max(0,Math.min(100,Number(value)||0));
  let content='';
  let progress='';
@@ -755,7 +759,7 @@ function hybridReadOnlyStage(t,i){
  </div>`;
 }
 function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{
- if(approvalStageKey(i)!==null&&!isAdmin())return `<div class="viewer-step approval-stage-readonly"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}</div></div>`;
+ if(approvalStageKey(i)!==null&&!isAdmin())return `<div class="viewer-step approval-stage-readonly"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}${i===1?dudasSection(t):''}</div></div>`;
  if(isCustom()&&!canEditStep(i))return hybridReadOnlyStage(t,i);const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
 if(i===3){const v=t.progress;detail=`<div class="row" style="margin-top:6px"><span class="muted">Avance de obra</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="progress" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
 if(i===5){
@@ -767,7 +771,7 @@ if(i===5){
  <div class="detail evidence-file-list">${viewerAttachmentLinks(t)}</div>`;
 }
 if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que terminó la obra</label><input type="date" data-id="${t.id}" data-field="workCompletedDate" ${canEdit?'':'disabled'} value="${esc(t.workCompletedDate||'')}"></div>`;
-if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true);
+if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true)+(i===1?dudasSection(t):'');
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
 return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details data-stage-activity="${t.id}" data-stage-index="${i}" ${openStageByActivity.get(String(t.id))===i?'open':''}><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`}
 let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='files'&&canEditStep(5)))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=action?.type==='files'&&!canAddDocument()?'none':'';$('modal').hidden=false;}
@@ -1007,7 +1011,7 @@ document.addEventListener('toggle',event=>{
 },true);
 $('board').addEventListener('input',event=>{
  const el=event.target;
- if(el.matches('textarea[data-comment-input]'))commentDrafts.set(Number(el.dataset.commentInput),el.value);
+ if(el.matches('textarea[data-comment-input]'))commentDrafts.set((el.dataset.commentThread||'notes')+':'+Number(el.dataset.commentInput),el.value);
 });
 $('board').addEventListener('click',async event=>{
  const button=event.target.closest('button[data-delete-comment]');
@@ -1016,27 +1020,27 @@ $('board').addEventListener('click',async event=>{
   alert('Solo los administradores pueden eliminar notas.');
   return;
  }
- const activityId=Number(button.dataset.commentActivity),commentId=Number(button.dataset.deleteComment);
+ const activityId=Number(button.dataset.commentActivity),commentId=Number(button.dataset.deleteComment),thread=button.dataset.commentThread==='dudas'?'dudas':'notes';
  const activity=task(activityId);
- if(!activity || !commentsFor(activityId).some(c=>Number(c.id)===commentId))return;
- if(!confirm('¿Eliminar definitivamente esta nota? Esta acción no se puede deshacer.'))return;
+ if(!activity || !commentsFor(activityId,thread).some(c=>Number(c.id)===commentId))return;
+ if(!confirm('¿Eliminar definitivamente este mensaje? Esta acción no se puede deshacer.'))return;
  const section=button.closest('.comments-section');
  const feedback=section?.querySelector('.comment-feedback');
  button.disabled=true;
  if(feedback)feedback.textContent='Eliminando comentario…';
  try{
   const {data,error}=await cloud.from('activity_comments').delete()
-    .eq('id',commentId).eq('activity_id',activityId).eq('project_id',PROJECT_ID)
+    .eq('id',commentId).eq('activity_id',activityId).eq('project_id',PROJECT_ID).eq('thread',thread)
     .select('id');
   if(error)throw error;
   if(!data||data.length!==1)throw Error('No se confirmó la eliminación. Comprueba tus permisos y actualiza la página.');
   await reloadComments();
   if(section?.isConnected){
    const feed=section.querySelector('[data-comment-feed]');
-   if(feed)feed.innerHTML=commentListHTML(activity);
+   if(feed)feed.innerHTML=commentListHTML(activity,thread);
    const count=section.querySelector('.comment-count');
-   if(count)count.textContent=String(commentsFor(activityId).length);
-   if(feedback)feedback.textContent='Nota eliminada.';
+   if(count)count.textContent=String(commentsFor(activityId,thread).length);
+   if(feedback)feedback.textContent='Mensaje eliminado.';
   }
  }catch(error){
   if(feedback)feedback.textContent='No se pudo eliminar: '+messageError(error);
@@ -1048,22 +1052,22 @@ $('board').addEventListener('submit',async event=>{
  if(!form)return;
  event.preventDefault();
  if(!canPostComment())return;
- const activityId=Number(form.dataset.commentForm),activity=task(activityId);
+ const activityId=Number(form.dataset.commentForm),activity=task(activityId),thread=form.dataset.commentThread==='dudas'?'dudas':'notes';
  if(!activity)return;
  const input=form.querySelector('textarea[data-comment-input]'),button=form.querySelector('button[type="submit"]'),feedback=form.querySelector('.comment-feedback');
  const body=input.value.trim();
  if(!body||body.length>2000){feedback.textContent='Escribe entre 1 y 2000 caracteres.';return}
  button.disabled=true;feedback.textContent='Publicando comentario…';
  try{
-  const {error}=await cloud.from('activity_comments').insert({project_id:PROJECT_ID,activity_id:activityId,body});
+  const {error}=await cloud.from('activity_comments').insert({project_id:PROJECT_ID,activity_id:activityId,body,thread});
   if(error)throw error;
-  input.value='';commentDrafts.delete(activityId);
+  input.value='';commentDrafts.delete(thread+':'+activityId);
   await reloadComments();
   const feed=form.closest('.comments-section').querySelector('[data-comment-feed]');
-  if(feed)feed.innerHTML=commentListHTML(activity);
+  if(feed)feed.innerHTML=commentListHTML(activity,thread);
   const count=form.closest('.comments-section').querySelector('.comment-count');
-  if(count)count.textContent=String(commentsFor(activityId).length);
-  feedback.textContent='Nota publicada.';
+  if(count)count.textContent=String(commentsFor(activityId,thread).length);
+  feedback.textContent=thread==='dudas'?'Duda publicada.':'Nota publicada.';
  }catch(error){feedback.textContent='No se pudo publicar la nota: '+messageError(error)}
  finally{button.disabled=false}
 });
