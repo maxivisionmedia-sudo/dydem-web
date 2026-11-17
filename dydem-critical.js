@@ -265,3 +265,125 @@ $('critical-config-panel').addEventListener('submit',async e=>{
  catch(err){message.textContent='Error: '+messageError(err)}
  finally{btn.disabled=false}
 });
+
+
+function printCriticalGanttPdf(){
+ if(!isAdmin())return;
+ if(!criticalMode){alert('Abre la Ruta crítica general antes de exportarla.');return}
+ const cpm=computeCriticalCPM(criticalActivities,criticalConfiguration),DAY=28,ROWS=19;
+ const search=$('critical-search').value.trim().toLowerCase(),onlyIncluded=$('critical-only-included').checked,onlyCritical=$('critical-only-critical').checked;
+ const visible=cpm.all.filter(n=>(!onlyIncluded||n.included)&&(!onlyCritical||n.critical)&&
+ (!search||(`${n.id} ${n.t.annex||''} ${n.t.title||''} ${projectLabel(n.project_id)}`).toLowerCase().includes(search)));
+ const offset=(new Date(cpm.start*CG_DAY_MS).getUTCDay()+6)%7;
+ const zero=cpm.start-offset,last=cpm.last+6-(new Date(cpm.last*CG_DAY_MS).getUTCDay()+6)%7;
+ const totalWeeks=Math.max(1,Math.ceil((last-zero+1)/DAY)),pages=[];
+ const today=cgDateDay(new Date().toISOString().slice(0,10));
+ const percent=x=>(x*100/DAY).toFixed(5);
+ const range=(a,b,first)=>{
+  if(a===null||b===null||a>b)return null;
+  const low=Math.max(a,first),high=Math.min(b,first+DAY-1);
+  return low<=high?{left:percent(low-first),width:percent(high-low+1),continuedLeft:a<first,continuedRight:b>first+DAY-1}:null;
+ };
+ const dateLabel=n=>cgDateText(n);
+ const summarize=n=>{
+  const label=n.critical?'CRÍTICA':!n.included?'Bloqueada':n.duration===null?'Sin fechas':n.slack===null?'Por calcular':'Holgura '+cgDigits(n.slack);
+  const refs=n.predecessors.map(id=>cpm.byId.get(id)?.t.annex||String(id));
+  return label+(refs.length?' · Dep.: '+refs.join(', '):'');
+ };
+ const weekNumber=n=>weekInfo(new Date(n*CG_DAY_MS)).week;
+ for(let w=0;w<totalWeeks;w++){
+  const start=zero+w*DAY,end=start+DAY-1;
+  const inPeriod=visible.filter(n=>{
+   const a=n.included&&n.earlyStart!==null?n.earlyStart:n.start;
+   const b=n.included&&n.earlyEnd!==null?n.earlyEnd:n.end;
+   return (a===null||b===null)?w===0:!!range(a,b,start);
+  }).sort((a,b)=>projectLabel(a.project_id).localeCompare(projectLabel(b.project_id),'es')
+   ||(a.earlyStart??a.start??Infinity)-(b.earlyStart??b.start??Infinity)||a.id-b.id);
+  const groups=Math.max(1,Math.ceil(inPeriod.length/ROWS));
+  for(let group=0;group<groups;group++){
+   const nodes=inPeriod.slice(group*ROWS,(group+1)*ROWS);
+   const weeks=Array.from({length:4},(_,i)=>`<div class="cp-week ${i%2?'cp-light':'cp-shade'}">Sem-${esc(weekNumber(start+i*7))} <span>${dateLabel(start+i*7)} – ${dateLabel(start+i*7+6)}</span></div>`).join('');
+   const dates=Array.from({length:DAY},(_,i)=>{const day=start+i,todayFlag=day===today;
+    return `<div class="cp-date ${Math.floor(i/7)%2?'cp-light':'cp-shade'} ${todayFlag?'cp-date-today':''}">${dateLabel(day).slice(0,2)}</div>`;
+   }).join('');
+   const bg=Array.from({length:DAY},(_,i)=>`<span class="cp-cell ${Math.floor(i/7)%2?'cp-light':'cp-shade'} ${i%7===0?'cp-boundary':''}"></span>`).join('');
+   const rows=nodes.map(n=>{
+    const a=n.included&&n.earlyStart!==null?n.earlyStart:n.start,b=n.included&&n.earlyEnd!==null?n.earlyEnd:n.end;
+    const rect=range(a,b,start);
+    const cls=n.critical?'cp-critical':!n.included?'cp-blocked':n.duration===null?'cp-undated':'cp-normal';
+    const progress=Math.max(0,Math.min(100,Number(n.t.progress)||0));
+    const rectHTML=rect?`<div class="cp-bar ${cls} ${rect.continuedLeft?'cp-carry-in':''} ${rect.continuedRight?'cp-carry-out':''}" style="left:${rect.left}%;width:${rect.width}%"><span class="cp-fill" style="width:${progress}%"></span></div>`:'';
+    const note=!rect?'<span class="cp-nodate">Sin fechas válidas</span>':'';
+    return `<div class="cp-row">
+     <div class="cp-label"><b>${esc(projectLabel(n.project_id))} · ${esc(n.t.annex||n.id)}</b>
+       <span class="cp-name">${esc(n.t.title||'Actividad')}</span><small>${esc(summarize(n))}</small></div>
+     <div class="cp-track"><div class="cp-grid">${bg}</div>${rectHTML}${note}</div></div>`;
+   }).join('')||'<div class="cp-empty">No hay actividades en este periodo con los filtros actuales.</div>';
+   const partial=groups>1?` · Grupo ${group+1} de ${groups}`:'';
+   const warning=cpm.cyclic?'Advertencia: hay dependencias circulares.':cpm.provisional?'Cálculo provisional: verifica fechas y dependencias.':'Ruta crítica calculada por CPM.';
+   pages.push(`<section class="cp-sheet">
+     <header class="cp-heading"><div><h1>DYDEM · Ruta crítica general</h1>
+       <p>Gantt de todos los proyectos · ${dateLabel(start)} al ${dateLabel(end)} · 4 semanas por hoja</p></div>
+       <aside>${esc(warning)}<br>Bloque ${w+1} de ${totalWeeks}${partial}</aside></header>
+     <div class="cp-metrics">${cpm.selected.length} actividades incluidas · ${cpm.all.length-cpm.selected.length} bloqueadas · ${cpm.criticalCount} críticas · ${cpm.links} dependencias válidas · Fin CPM: ${cpm.finish===null?'Sin calcular':dateLabel(cpm.finish)}</div>
+     <div class="cp-chart"><div class="cp-header"><div class="cp-caption">PROYECTO · ANEXO · ACTIVIDAD · DEPENDENCIAS</div>
+       <div class="cp-calendar"><div class="cp-weeks">${weeks}</div><div class="cp-dates">${dates}</div></div></div>
+       <div class="cp-rows">${rows}</div></div>
+     <footer class="cp-footer"><div class="cp-legend"><span><i class="cp-key-crit"></i> Crítica (holgura 0)</span>
+       <span><i class="cp-key-normal"></i> Incluida</span>
+       <span><i class="cp-key-block"></i> Bloqueada</span>
+       <span><i class="cp-key-unknown"></i> Sin fechas</span></div>
+       <span>${nodes.length} actividades de ${inPeriod.length} en este periodo · Página __PAGE__ de __TOTAL__</span></footer>
+    </section>`);
+  }
+ }
+ const html=pages.map((html,i)=>html.replace('__PAGE__',String(i+1)).replace('__TOTAL__',String(pages.length))).join('');
+ const css=`
+ @page{size:A4 landscape;margin:7mm}
+ *{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+ html,body{margin:0!important;padding:0!important;font-family:Arial,Helvetica,sans-serif;color:#22344e;background:#fff!important}
+ .cp-sheet{width:283mm;height:196mm;overflow:hidden;position:relative;page-break-inside:avoid;break-inside:avoid;background:white}
+ .cp-sheet:not(:last-child){page-break-after:always;break-after:page}
+ .cp-heading{height:18mm;display:flex;justify-content:space-between;align-items:flex-start;gap:5mm}
+ .cp-heading h1{font-size:15pt;margin:.5mm 0 1mm}.cp-heading p{font-size:9pt;margin:0}
+ .cp-heading aside{text-align:right;font-size:8pt;max-width:100mm;color:#536781;line-height:1.55}
+ .cp-metrics{height:9mm;border-bottom:.6px solid #9cacc0;font-size:8.5pt;color:#33557b;padding:2mm 0}
+ .cp-chart{margin-top:6mm;border:1px solid #b2c2d5;overflow:hidden}
+ .cp-header,.cp-row{display:grid;grid-template-columns:80mm minmax(0,1fr)}
+ .cp-header{height:17mm;border-bottom:1px solid #7c93b0}
+ .cp-caption{font-size:8.3pt;font-weight:700;background:#edf4fc;padding:5mm 2mm;border-right:1px solid #8ca0b9}
+ .cp-calendar{min-width:0}.cp-weeks{height:8mm;display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+ .cp-week{font-weight:700;font-size:8pt;padding:2mm 1mm;border-right:1px solid #859bb6;white-space:nowrap}
+ .cp-week span{float:right;color:#586b81;font-size:6pt}
+ .cp-dates{display:grid;grid-template-columns:repeat(28,minmax(0,1fr));height:9mm}
+ .cp-date{text-align:center;padding:2.2mm 0;font-size:6.7pt;border-right:.5px solid #bac8d6}
+ .cp-date-today{background:#70dbad!important}
+ .cp-rows{width:100%}
+ .cp-row{height:7.9mm;position:relative;break-inside:avoid;border-bottom:.4px solid #cbd7e3}
+ .cp-label{overflow:hidden;background:#fafcff;display:flex;flex-direction:column;justify-content:center;padding:.5mm 1.2mm;border-right:1px solid #acbbcd}
+ .cp-label b{font-size:7.3pt;line-height:1.12;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+ .cp-label .cp-name{font-size:7.1pt;line-height:1.15;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+ .cp-label small{font-size:5.8pt;color:#6d7889;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .cp-track{position:relative;overflow:hidden}.cp-grid{position:absolute;inset:0;display:grid;grid-template-columns:repeat(28,minmax(0,1fr))}
+ .cp-cell{border-right:.4px solid #b3bfd0}.cp-boundary{border-left:.7px solid #879bb5}
+ .cp-shade{background:#daebfc}.cp-light{background:#fff}
+ .cp-bar{position:absolute;z-index:2;top:1.5mm;bottom:1.5mm;min-width:0;border-radius:1mm;border:1.1pt solid #448ac7;background:#9fccf5;overflow:hidden}
+ .cp-bar.cp-critical{background:#f5a7a7;border-color:#bb2c3b}
+ .cp-bar.cp-blocked{background:#d4d9df;border-color:#89929d;border-style:dashed}
+ .cp-bar.cp-undated{background:#f3e5c5;border-color:#d4a851}
+ .cp-carry-in{border-left:0;border-top-left-radius:0;border-bottom-left-radius:0}
+ .cp-carry-out{border-right:0;border-top-right-radius:0;border-bottom-right-radius:0}
+ .cp-fill{position:absolute;bottom:0;left:0;top:65%;background:rgba(30,79,127,.35)}
+ .cp-critical .cp-fill{background:rgba(170,32,48,.4)}
+ .cp-nodate{font-size:7pt;color:#737f8e;position:absolute;top:2.2mm;left:2mm}
+ .cp-empty{padding:8mm;text-align:center;color:#65778d;font-size:9pt}
+ .cp-footer{position:absolute;bottom:2mm;left:0;right:0;display:flex;justify-content:space-between;gap:4mm;align-items:center;font-size:7pt;color:#52667e}
+ .cp-footer>span{white-space:nowrap}.cp-legend{display:flex;gap:3mm;flex-wrap:wrap}
+ .cp-legend span{white-space:nowrap}.cp-legend i{display:inline-block;vertical-align:middle;width:3mm;height:1.5mm;border:1px solid #7793b3;margin-right:.8mm}
+ .cp-key-crit{background:#f5a7a7;border-color:#bb2c3b!important}.cp-key-normal{background:#9fccf5}
+ .cp-key-block{background:#d4d9df;border-style:dashed!important}.cp-key-unknown{background:#f3e5c5}
+ `;
+ printWindow('DYDEM · Ruta crítica general · Gantt',html,css,true);
+}
+
+$('critical-print').onclick=printCriticalGanttPdf;
