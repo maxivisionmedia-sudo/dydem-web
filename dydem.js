@@ -38,7 +38,7 @@ async function selectProject(id,discardAlreadyConfirmed=false){
  if(PROJECT_ID===id&&!criticalMode)return;
  if(saveBusy){alert('Hay un guardado en proceso. Intenta cambiar de proyecto después.');renderProjectPicker();return}
  if(isDirty()&&!discardAlreadyConfirmed&&!confirm('Hay cambios sin guardar. ¿Cambiar de proyecto y descartarlos?')){renderProjectPicker();return}
- PROJECT_ID=id;storeSet(PROJECT_SELECTION_KEY,id);criticalMode=false;
+ PROJECT_ID=id;storeSet(PROJECT_SELECTION_KEY,id);criticalMode=false;activityListFilter='all';$('search').value='';
  if($('project-users-panel'))$('project-users-panel').hidden=true;
  $('critical-path-panel').hidden=true;$('project-workspace').hidden=false;
  $('project-create-form').hidden=true;
@@ -73,6 +73,8 @@ function migrate(t){
   verification:0,workCompletedDate:t.workCompletedDate||'',responsibles,approvals};
 }
 let tasks=[];
+let activityListFilter='all';
+const activityFocus=DydemActivityFocus;
 const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // Autenticación y datos centralizados: nunca se almacenan contraseñas en DYDEM.
@@ -289,7 +291,7 @@ async function loadAccount(){const {data:sessionData,error:sessionError}=await c
  enterAccount({...profile,display_name:loginName||user.user_metadata?.display_name||profile.email});await loadProjects();
  if(projectRecords.length){await reloadActivities(true);startRealtime()}else syncState('Tu cuenta no tiene proyectos asignados. Solicita acceso al Administrador.',true);
  if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
-async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;PROJECT_ID=ORIGINAL_PROJECT_ID;projectRecords=[{id:ORIGINAL_PROJECT_ID,name:'Obra DYDEM',description:''}];criticalMode=false;criticalActivities=[];criticalConfiguration.clear();criticalSelectedId=null;
+async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;activityListFilter='all';$('search').value='';PROJECT_ID=ORIGINAL_PROJECT_ID;projectRecords=[{id:ORIGINAL_PROJECT_ID,name:'Obra DYDEM',description:''}];criticalMode=false;criticalActivities=[];criticalConfiguration.clear();criticalSelectedId=null;
  $('project-switcher').hidden=true;$('project-create-form').hidden=true;$('project-workspace').hidden=false;$('critical-path-panel').hidden=true;
  tasks=[];commentsByActivity.clear();pendingAttachmentIntents.clear();pendingFileRegistrations.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');if($('welcome-user')){$('welcome-user').textContent='';$('welcome-user').hidden=true}$('access-gate').hidden=false;$('user-management').hidden=true;
  if($('generated-invitation')){
@@ -821,6 +823,76 @@ function pendingMyApprovalStages(t){
 }
 function needsMyApproval(t){return pendingMyApprovalStages(t).length>0}
 
+const activityStageLabel=i=>({2:'Autorización',6:'Finalización'})[i]||names[i];
+function activityNextAction(t){
+ if(activityFocus.finished(t))return {stage:6,text:'Actividad finalizada',mine:false};
+ const mine=pendingMyApprovalStages(t);
+ if(mine.length)return {stage:mine[0],text:'Requiere tu confirmación en '+activityStageLabel(mine[0]),mine:true};
+ const stage=activityFocus.stage(t);
+ let text='';
+ if(approvalStageKey(stage)!==null){
+  const people=stagePeople(t,stage),approved=new Set(approvedPeople(t,stage));
+  const pending=people.filter(id=>!approved.has(id));
+  if(!people.length)text=stage===2?'Asignar responsables de Autorización · Administrador':'Aprobación de '+activityStageLabel(stage)+' · Administrador';
+  else if(pending.length){
+   const display=pending.slice(0,2).map(responsibleName).join(', ');
+   text='Esperando a '+display+(pending.length>2?' y '+(pending.length-2)+' más':'')+' · '+activityStageLabel(stage);
+  }else text='Revisar cierre de '+activityStageLabel(stage)+' · Administrador';
+ }else if(stage===0)text=(requiredDates(t)?'Confirmar propuesta':'Completar fechas de la propuesta')+' · Administrador';
+ else if(stage===3)text=(activityFocus.workDone(t)?'Confirmar fin de obra':'Actualizar avance de obra')+' · Administrador';
+ else if(stage===5)text='Completar archivos de Evidencia · Administrador o usuario con permiso';
+ else text=(t.completedDate?'Confirmar finalización':'Registrar fecha de finalización')+' · Administrador o usuario con permiso';
+ return {stage,text,mine:false};
+}
+function activityFocusHTML(t){
+ const next=activityNextAction(t),finished=activityFocus.finished(t),closure=activityFocus.closure(t),late=activityFocus.overdue(t);
+ const end=activityFocus.validDate(t.end)?t.end.split('-').reverse().join('/'):'Sin fecha';
+ const badge=finished?'Finalizada':closure?'Cierre pendiente':late?'Obra atrasada':'';
+ return `<div class="activity-focus ${next.mine?'activity-focus-mine':''}">
+  <div class="activity-focus-meta"><span>Obra: <b>${activityFocus.progress(t)}%</b></span><span>${finished?'Estado':'Etapa'}: <b>${esc(finished?'Finalizada':activityStageLabel(activityFocus.stage(t)))}</b></span></div>
+  <div class="activity-focus-dates"><span>Fin previsto: ${esc(end)}</span>${badge?`<span class="activity-focus-badge ${late?'is-overdue':closure?'is-closure':'is-finished'}">${esc(badge)}</span>`:''}</div>
+  ${!finished?`<div class="activity-next-action"><p>${esc(next.text)}</p><button type="button" class="btn secondary activity-open-stage" data-open-activity-stage="${next.stage}" data-id="${t.id}" aria-label="Abrir ${esc(activityStageLabel(next.stage))} de ${esc(t.annex||t.title)}">Abrir ${esc(activityStageLabel(next.stage))}</button></div>`:''}
+ </div>`;
+}
+function activityMatchesFilter(t,today=activityFocus.todayISO()){
+ return activityFocus.matchesFilter(t,activityListFilter,{today,pendingApproval:needsMyApproval(t)});
+}
+function renderActivityFilters(searchMatches,visibleCount){
+ const today=activityFocus.todayISO();
+ for(const [key,label] of Object.entries(activityFocus.filters)){
+  const button=$('activity-filter-'+key);
+  if(!button)continue;
+  const count=searchMatches.filter(t=>activityFocus.matchesFilter(t,key,{today,pendingApproval:needsMyApproval(t)})).length;
+  button.setAttribute('aria-pressed',String(activityListFilter===key));
+  button.querySelector('[data-filter-count]').textContent=String(count);
+  button.setAttribute('aria-label',label+': '+count+' actividades');
+ }
+ const summary=$('activity-filter-summary');
+ if(summary)summary.textContent=`Mostrando ${visibleCount} de ${tasks.length} actividades · ${activityFocus.filters[activityListFilter]}`+(visibleCount?'':'. No hay coincidencias.');
+ if($('activity-filters-clear'))$('activity-filters-clear').hidden=activityListFilter==='all'&&!$('search').value;
+}
+function openActivityStage(id,stage){
+ if(!isSignedIn()||!task(id)||!Number.isInteger(stage)||stage<0||stage>6)return;
+ if(collapsedActivities.delete(String(id)))persistCollapsed();
+ render();
+ const article=$('activity-'+id);
+ if(!article)return;
+ const outer=article.querySelector('details.viewer-stages');
+ if(outer){outer.open=true;sectionOpen.set('stages:'+id,true)}
+ const target=article.querySelector('[data-focus-stage="'+stage+'"]');
+ if(!target)return;
+ const detail=target.querySelector('details[data-stage-index]');
+ if(detail){
+  article.querySelectorAll('details[data-stage-index]').forEach(other=>{other.open=other===detail});
+  openStageByActivity.set(String(id),stage);
+ }
+ target.tabIndex=-1;
+ target.focus({preventScroll:true});
+ target.scrollIntoView({behavior:'smooth',block:'center',inline:'nearest'});
+ highlightActivity(id);
+ history.replaceState(null,'','#activity-'+encodeURIComponent(String(id)));
+}
+
 function approvalStageSummary(t,i,editable=false){
  const responsible=stagePeople(t,i),approved=new Set(approvedPeople(t,i));
  const confirmed=responsible.filter(id=>approved.has(id));
@@ -1099,8 +1171,8 @@ function viewerCard(t){
  const stageOpen=sectionIsOpen(t.id,'stages')?' open':'';
  const progress=Math.max(0,Math.min(100,Number(t.progress)||0));
 
- const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step proposal-view"><b>Descripción (opcional):</b><span class="proposal-description-text">${esc(t.proposalDescription||'Sin descripción')}</span></div><div class="viewer-step review-with-dudas"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}</div><div class="review-dudas-wide">${reviewFilesSection(t)}${dudasSection(t)}</div></div><div class="viewer-step"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step"><b>6. Evidencia (obligatoria):</b><span><strong>Progreso de Evidencia: ${evidencePct(t)}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}</span></div><div class="viewer-progress"><div style="width:${evidencePct(t)}%"></div></div><div class="viewer-step"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
- return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${needsMyApproval(t)?'needs-my-approval':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div><div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`;
+ const phase=`<details class="viewer-section viewer-stages" data-activity-section="${t.id}" data-section-kind="stages"${stageOpen}><summary>7 etapas · consulta</summary><div class="viewer-section-inner"><div class="viewer-step" data-focus-stage="0"><b>1. Propuesta:</b><span>${esc(t.start||'Sin fecha')} – ${esc(t.end||'Sin fecha')}<small>Después de: ${esc(viewerLinkedActivity(t.before))}</small></span></div><div class="viewer-step proposal-view"><b>Descripción (opcional):</b><span class="proposal-description-text">${esc(t.proposalDescription||'Sin descripción')}</span></div><div class="viewer-step review-with-dudas" data-focus-stage="1"><b>2. Revisión:</b><div class="viewer-approval-value">${approvalStageSummary(t,1)}</div><div class="review-dudas-wide">${reviewFilesSection(t)}${dudasSection(t)}</div></div><div class="viewer-step" data-focus-stage="2"><b>3. Autorizado:</b><div class="viewer-approval-value">${approvalStageSummary(t,2)}</div></div><div class="viewer-step" data-focus-stage="3"><b>4. Avance de Obra:</b><span>${progress}%<small>Fin real de obra: ${esc(t.workCompletedDate||'Sin fecha')}</small></span></div><div class="viewer-progress"><div style="width:${progress}%"></div></div><div class="viewer-step" data-focus-stage="4"><b>5. Verificación:</b><div class="viewer-approval-value">${approvalStageSummary(t,4)}</div></div><div class="viewer-step" data-focus-stage="5"><b>6. Evidencia (obligatoria):</b><span><strong>Progreso de Evidencia: ${evidencePct(t)}%</strong><small>${t.steps[5]?'Archivos requeridos: completos':'Archivos requeridos: pendientes'}</small>${viewerAttachmentLinks(t)}</span></div><div class="viewer-progress"><div style="width:${evidencePct(t)}%"></div></div><div class="viewer-step" data-focus-stage="6"><b>7. Finalizado:</b><span>${t.steps[6]?esc(t.completedDate||'Sí'):'Pendiente'}</span></div></div></details>`;
+ return `<article class="task task-viewer ${stateClass} ${isBuilt(t)?'status-built':''} ${needsMyApproval(t)?'needs-my-approval':''} ${collapsed?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsed}" title="Minimizar o expandir actividad">${collapsed?'+':'−'}</button></div>${activityFocusHTML(t)}<div class="task-details"><div class="muted viewer-subheading">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${phase}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`;
 }
 function isMobileTimeline(){return typeof window!=='undefined' && window.matchMedia('(max-width: 760px)').matches}
 function timelineHTML(print=false,compact=false,mobile=isMobileTimeline()&&!print){
@@ -1154,7 +1226,7 @@ function highlightActivity(id){
 }
 function jumpToActivity(id){
  if(!task(id))return;
- $('search').value='';
+ activityListFilter='all';$('search').value='';
  if(collapsedActivities.delete(String(id)))persistCollapsed();
  render();
  highlightActivity(id);
@@ -1219,15 +1291,32 @@ window.addEventListener('resize',()=>{
  const host=$('timeline');
  if(host)host.innerHTML=timelineHTML(false,compactTimeline,mobile);
 });
-function render(){rememberOpenStages();const w=weekInfo();document.querySelector('header small').textContent=`CONTROL DE OBRA · ${projectName().toUpperCase()} · SEMANA ${w.week} / ${w.year}`;document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;let q=$('search').value.toLowerCase();const counts={'Por empezar':0,'En proceso':0,'Terminado':0};tasks.forEach(t=>counts[status(t)]++);$('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];$('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];const banner=$('pending-approvals-banner');
+function render(){
+ rememberOpenStages();
+ const w=weekInfo();
+ document.querySelector('header small').textContent=`CONTROL DE OBRA · ${projectName().toUpperCase()} · SEMANA ${w.week} / ${w.year}`;
+ document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;
+ const counts={'Por empezar':0,'En proceso':0,'Terminado':0};
+ tasks.forEach(t=>counts[status(t)]++);
+ $('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];
+ $('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];
+ const banner=$('pending-approvals-banner');
  if(banner){
   const pending=tasks.filter(needsMyApproval).length;
   banner.hidden=!pending;
-  banner.textContent=pending?`Tienes ${pending} actividad${pending===1?'':'es'} pendiente${pending===1?'':'s'} de tu aprobación. Las encontrarás delineadas en color ámbar.`:'';
+  banner.textContent=pending?`Tienes ${pending} actividad${pending===1?'':'es'} pendiente${pending===1?'':'s'} de tu aprobación. Usa el filtro «Requieren mi aprobación» en la lista de actividades.`:'';
  }
- $('board').innerHTML=['Por empezar','En proceso','Terminado'].map(st=>{const list=tasks.filter(t=>status(t)===st&&(`${t.id} ${t.title}`).toLowerCase().includes(q));return `<section class="column"><h2>${st} (${counts[st]})</h2>${list.length?list.map(card).join(''):'<div class="empty">Sin actividades</div>'}</section>`}).join('');setTimelineButtonLabel();$('timeline').innerHTML=timelineHTML(false,compactTimeline,isMobileTimeline());showSelectedActivity();}
+ const searchMatches=tasks.filter(t=>activityFocus.matchesSearch(t,$('search').value)),today=activityFocus.todayISO();
+ const visible=searchMatches.filter(t=>activityMatchesFilter(t,today));
+ renderActivityFilters(searchMatches,visible.length);
+ $('board').innerHTML=['Por empezar','En proceso','Terminado'].map(st=>{
+  const list=visible.filter(t=>status(t)===st),counter=list.length===counts[st]?String(list.length):list.length+' de '+counts[st];
+  return `<section class="column"><h2>${st} (${counter})</h2>${list.length?list.map(card).join(''):'<div class="empty">Sin actividades'+(counts[st]?' con estos filtros':'')+'</div>'}</section>`;
+ }).join('');
+ setTimelineButtonLabel();$('timeline').innerHTML=timelineHTML(false,compactTimeline,isMobileTimeline());showSelectedActivity();
+}
 function hybridReadOnlyStage(t,i){
- if(approvalStageKey(i)!==null)return `<div class="hybrid-readonly-step ${i===1?'review-with-dudas':''}" data-step-readonly="${i}"><b class="hybrid-read-label">${i+1}. ${esc(names[i])}:</b><div class="hybrid-read-value">${approvalStageSummary(t,i)}</div>${i===1?`<div class="review-dudas-wide">${reviewFilesSection(t)}${dudasSection(t)}</div>`:''}</div>`;
+ if(approvalStageKey(i)!==null)return `<div class="hybrid-readonly-step ${i===1?'review-with-dudas':''}" data-step-readonly="${i}" data-focus-stage="${i}"><b class="hybrid-read-label">${i+1}. ${esc(names[i])}:</b><div class="hybrid-read-value">${approvalStageSummary(t,i)}</div>${i===1?`<div class="review-dudas-wide">${reviewFilesSection(t)}${dudasSection(t)}</div>`:''}</div>`;
  const pct=value=>Math.max(0,Math.min(100,Number(value)||0));
  let content='';
  let progress='';
@@ -1248,14 +1337,14 @@ function hybridReadOnlyStage(t,i){
  }else if(i===6){
   content=t.steps[6]?esc(t.completedDate||'Sí'):'No';
  }
- return `<div class="hybrid-readonly-step" data-step-readonly="${i}">
+ return `<div class="hybrid-readonly-step" data-step-readonly="${i}" data-focus-stage="${i}">
   <b class="hybrid-read-label">${i+1}. ${esc(names[i])}:</b>
   <div class="hybrid-read-value">${content}</div>
   ${progress}
  </div>`;
 }
 function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{
- if(approvalStageKey(i)!==null&&!isAdmin())return `<div class="viewer-step approval-stage-readonly ${i===1?'review-with-dudas':''}"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}</div>${i===1?`<div class="review-dudas-wide">${reviewFilesSection(t)}${dudasSection(t)}</div>`:''}</div>`;
+ if(approvalStageKey(i)!==null&&!isAdmin())return `<div class="viewer-step approval-stage-readonly ${i===1?'review-with-dudas':''}" data-focus-stage="${i}"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}</div>${i===1?`<div class="review-dudas-wide">${reviewFilesSection(t)}${dudasSection(t)}</div>`:''}</div>`;
  if(isCustom()&&!canEditStep(i))return hybridReadOnlyStage(t,i);const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
 if(i===0)detail+=`<div class="field proposal-optional-section"><label for="proposal-description-${t.id}">Descripción (opcional)</label><textarea id="proposal-description-${t.id}" data-id="${t.id}" data-field="proposalDescription" rows="3" maxlength="10000" placeholder="Descripción adicional de la propuesta (opcional)" ${canEdit?'':'disabled'}>${esc(t.proposalDescription||'')}</textarea></div>`;
 if(i===3){const v=t.progress;detail=`<div class="row" style="margin-top:6px"><span class="muted">Avance de obra</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="progress" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
@@ -1270,7 +1359,7 @@ if(i===5){
 if(i===3)detail+=`<div class="field" style="margin-top:9px"><label>Fecha en que terminó la obra</label><input type="date" data-id="${t.id}" data-field="workCompletedDate" ${canEdit?'':'disabled'} value="${esc(t.workCompletedDate||'')}"></div>`;
 if(approvalStageKey(i)!==null)detail=approvalStageSummary(t,i,true)+(i===1?reviewFilesSection(t)+dudasSection(t):'');
 if(i===6)detail=`<div class="row" style="margin-top:6px"><div class="field"><label>Fecha de compleción</label><input type="date" data-id="${t.id}" data-field="completedDate" ${canEdit?'':'disabled'} value="${esc(t.completedDate)}"></div></div>`;
-return `<div class="step"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details data-stage-activity="${t.id}" data-stage-index="${i}" ${openStageByActivity.get(String(t.id))===i?'open':''}><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${needsMyApproval(t)?'needs-my-approval':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div><div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`}
+return `<div class="step" data-focus-stage="${i}"><label><input type="checkbox" data-step="${i}" data-id="${t.id}" ${[1,2,4,5].includes(i)||!canEdit?'disabled':''} ${t.steps[i]?'checked':''}>${i+1}. ${n}</label><details data-stage-activity="${t.id}" data-stage-index="${i}" ${openStageByActivity.get(String(t.id))===i?'open':''}><summary>Ver / editar datos</summary>${detail}${i===5&&canEdit?`<button class="btn secondary" style="margin:7px 0 0 24px" data-edit="${i}" data-id="${t.id}">Gestionar Archivos</button>`:''}</details></div>`}).join('');return `<article class="task ${isCustom()?'task-hybrid':''} ${status(t)==='Por empezar'?'status-pending':status(t)==='Terminado'?'status-finished':'status-active'} ${isBuilt(t)?'status-built':''} ${needsMyApproval(t)?'needs-my-approval':''} ${collapsedActivities.has(String(t.id))?'is-collapsed':''}" id="activity-${t.id}"><div class="head"><button type="button" class="number activity-number-jump" data-jump-timeline="${t.id}" title="Ubicar anexo ${esc(t.annex)} en el cronograma">${esc(t.annex)}</button><h3><button type="button" class="activity-name-jump" data-jump-timeline="${t.id}" title="Ubicar esta actividad en el cronograma">${statusDot(t)}<span class="activity-name-text">${esc(t.title)}</span></button></h3><button type="button" class="btn collapse-btn" data-collapse="${t.id}" aria-expanded="${!collapsedActivities.has(String(t.id))}" title="Minimizar o expandir actividad">${collapsedActivities.has(String(t.id))?'+':'−'}</button></div>${activityFocusHTML(t)}<div class="task-details"><div class="muted" style="margin-top:7px">Anexo ${esc(t.annex)} · Semana de alta: ${esc(t.weekStart)} al ${esc(t.weekEnd)}</div>${isCustom()?`<details class="viewer-section viewer-stages hybrid-stages" data-activity-section="${t.id}" data-section-kind="stages" ${sectionIsOpen(t.id,'stages')?'open':''}><summary>7 etapas · ${t.steps.filter(Boolean).length}/7 completadas</summary><div class="viewer-section-inner hybrid-steps">${steps}</div></details>`:`<div class="section-title">7 ETAPAS · ${t.steps.filter(Boolean).length}/7 completadas</div><div class="steps">${steps}</div>`}${canEditStep(0)?`<button class="btn secondary" style="margin-top:10px" data-rename="${t.id}">Editar descripción</button>`:''} ${canDeleteActivity()?`<button type="button" class="btn secondary" style="margin-top:10px;border-color:#c93434;color:#a52121" data-delete="${t.id}">Eliminar actividad</button>`:''}${commentsSection(t)}${returnToTimelineLink(t)}</div></article>`}
 let active=null;function modal(title,help,fields,action){if(!isAdmin()&&!(action?.type==='files'&&canEditStep(5))&&!(action?.type==='review-files'&&canManageReviewFiles(task(action.id))))return;active=action;$('modal-title').textContent=title;$('modal-help').textContent=help;$('modal-fields').innerHTML=fields;$('modal-error').textContent='';const submit=$('modal-form').querySelector('button[type="submit"]');if(submit)submit.style.display=(action?.type==='files'&&!canAddDocument()||action?.type==='review-files'&&!canAddReviewFile(task(action.id)))?'none':'';$('modal').hidden=false;}
 function close(){if(attachmentUploadBusy){alert('La carga de archivos sigue en curso. Espera a que termine.');return}active=null;$('modal').hidden=true;render()}
 $('modal-cancel').onclick=close;
@@ -1486,6 +1575,8 @@ async function confirmUploadedAttachment(t,intent,section=intent?.section||'evid
 async function getFile(meta){if(!isSignedIn())throw Error('Acceso requerido');if(!meta?.path)throw Error('Este anexo procede de una versión local. Debes volver a cargar el archivo original en DYDEM en línea.');if(!meta.path.startsWith(PROJECT_ID+'/'))throw Error('Referencia de archivo inválida');const {data,error}=await cloud.storage.from('activity-attachments').download(meta.path);if(error)throw error;return data}
 async function deleteFile(meta,section='evidence'){const activity=task(active?.id);if(section==='review'?!canRemoveReviewFile(activity):!canDeleteDocument())throw Error('Sin permisos');if(!meta?.path)return;const {error}=await cloud.storage.from('activity-attachments').remove([meta.path]);if(error)throw error}
 $('board').addEventListener('click',async e=>{
+ const shortcut=e.target.closest('button[data-open-activity-stage]');
+ if(shortcut){openActivityStage(shortcut.dataset.id,Number(shortcut.dataset.openActivityStage));return}
  const target=e.target.closest('button[data-jump-timeline]');
  if(target){jumpToTimeline(target.dataset.jumpTimeline);return}
  const b=e.target.closest('button');if(!b)return;
@@ -1779,6 +1870,14 @@ $('modal-fields').addEventListener('change',e=>{if(e.target.id!=='attachments-in
 
 $('add').onclick=async()=>{if(!canAddActivity())return;let title=prompt('Descripción de la nueva actividad:');if(!title?.trim())return;syncState('Creando actividad…',false,true);const {data,error}=await cloud.rpc('create_activity',{p_title:title.trim(),p_project_id:PROJECT_ID});if(error){syncState('Error al crear',true);alert(messageError(error));return}const id=Number(data.id);collapsedActivities.add(String(id));persistCollapsed();await reloadActivities(true);if(isAdmin())startup()};
 $('search').oninput=render;
+$('activity-filters').addEventListener('click',event=>{
+ const button=event.target.closest('button[data-activity-filter]');
+ if(!button||!Object.hasOwn(activityFocus.filters,button.dataset.activityFilter))return;
+ activityListFilter=button.dataset.activityFilter;render();
+});
+$('activity-filters-clear').onclick=()=>{
+ activityListFilter='all';$('search').value='';render();$('search').focus();
+};
 $('save').onclick=async()=>{if(!canEditAnyStep())return;await save();if(!isDirty())alert('Información guardada en DYDEM en línea.')};
 $('backup').onclick=()=>{if(!isAdmin())return;let blob=new Blob([JSON.stringify({project:'DYDEM',project_id:PROJECT_ID,project_name:projectName(),version:4,exportedAt:new Date().toISOString(),tasks},null,2)],{type:'application/json'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='respaldo_dydem_'+projectName().toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,30)+'_'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)};
 $('import').onclick=()=>{if(isAdmin())$('importfile').click()};

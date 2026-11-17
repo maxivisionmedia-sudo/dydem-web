@@ -963,6 +963,36 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
 #project-users-status{font-size:12px;color:#365777;white-space:normal}
 #critical-print{white-space:nowrap}
 @media(max-width:650px){.project-users-header{flex-wrap:wrap}.project-users-list{grid-template-columns:1fr}}
+
+/* Actividades: filtros de la lista y siguiente acción, también al minimizar. */
+.activity-list-tools{margin:22px 0 12px;padding:16px;background:#fff;border:1px solid #dae1ec;border-radius:13px}
+.activity-list-heading{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.activity-list-heading h2{margin:0;font-size:18px;color:#263c59}
+.activity-search{display:grid;gap:4px;font-size:12px;color:#52647a;width:min(340px,100%)}
+.activity-search input{width:100%}
+.activity-filters{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
+.activity-filter{border:1px solid #c4d1e3;border-radius:999px;background:#f7f9fc;color:#33465e;padding:9px 12px;min-height:40px;font:inherit;font-size:12px;font-weight:650;cursor:pointer;display:flex;align-items:center;gap:8px}
+.activity-filter[aria-pressed="true"]{background:#1f4fb8;color:white;border-color:#1f4fb8}
+.activity-filter [data-filter-count]{background:#e1e8f3;color:#2b425f;border-radius:999px;min-width:22px;padding:2px 5px;text-align:center;font-size:11px}
+.activity-filter[aria-pressed="true"] [data-filter-count]{background:#fff;color:#1f4fb8}
+.activity-filter:focus-visible,.activity-open-stage:focus-visible{outline:3px solid #dd9d13;outline-offset:3px}
+.activity-filter-feedback{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px;flex-wrap:wrap}
+#activity-filter-summary{margin:0;font-size:12px;color:#53647c}
+#activity-filters-clear{font-size:12px;padding:6px 9px}#activity-filters-clear[hidden]{display:none!important}
+.activity-focus{margin-top:10px;padding-top:8px;border-top:1px solid #74839a40;font-size:11px;color:#33465e}
+.activity-focus-meta,.activity-focus-dates{display:flex;gap:5px 10px;align-items:center;flex-wrap:wrap;margin-bottom:5px}
+.activity-focus-badge{border-radius:5px;padding:2px 6px;font-size:10px;font-weight:750;border:1px solid transparent}
+.activity-focus-badge.is-overdue{color:#9c262a;background:#fff1ef;border-color:#e4b0ad}
+.activity-focus-badge.is-closure{color:#235490;background:#e8f2ff;border-color:#a8c3e8}
+.activity-focus-badge.is-finished{color:#14613c;background:#e7f8ed;border-color:#9bcaab}
+.activity-next-action{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
+.activity-next-action p{margin:0;line-height:1.5;overflow-wrap:anywhere}
+.activity-open-stage{font-size:11px;padding:6px 9px;min-height:32px;border:1px solid #b8c8de;background:#fff!important;color:#2453a0!important;white-space:normal;text-align:left}
+.activity-focus-mine .activity-next-action p{font-weight:750;color:#7d4709}
+.activity-focus-mine .activity-open-stage{background:#fff4d9!important;border-color:#bf8e35;color:#764600!important}
+[data-focus-stage]:focus-visible{outline:2px solid #2558d6;outline-offset:4px;border-radius:5px}
+@media(max-width:560px){.activity-list-tools{padding:12px}.activity-search{width:100%}.activity-filter{padding:9px 10px}.activity-open-stage{min-height:40px}}
+@media print{.activity-list-tools,.activity-open-stage{display:none!important}}
 </style></head><body><div id="access-gate"><div class="access-box"><h2 id="access-title">Acceso a DYDEM en línea</h2><p id="access-help">Inicia sesión con el correo electrónico de tu cuenta.</p><form id="access-form"><label>Correo electrónico<input id="access-user" type="email" required autocomplete="username" placeholder="usuario@empresa.com"></label><label>Contraseña<input id="access-pass" type="password" required autocomplete="current-password"></label><p id="access-error" role="alert"></p><button class="btn" type="submit" id="access-submit">Iniciar sesión</button></form><form id="invite-activation" hidden>
  <h3>Registro de usuario DYDEM</h3>
  <p id="invite-registration-description" class="invite-activation-description">Regístrate únicamente con el enlace de invitación autorizado por el Administrador. Se puede utilizar una sola vez.</p>
@@ -1033,7 +1063,17 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
  <p id="project-create-error" class="error" role="status"></p>
 </form>
 <div id="project-workspace">
-<section class="stats"><div class="stat"><small>Total</small><b id="total"></b></div><div class="stat"><small>Por empezar</small><b id="nstart"></b></div><div class="stat"><small>En proceso</small><b id="nprogress"></b></div><div class="stat"><small>Terminado</small><b id="ndone"></b></div></section><nav class="toolbar"><button class="btn admin-only" id="add">+ Agregar actividad</button><input id="search" placeholder="Buscar actividad"><button class="btn secondary admin-only" id="save">Guardar cambios</button><button class="btn secondary admin-only" id="backup">Exportar respaldo JSON</button><button class="btn secondary admin-only" id="import">Importar respaldo</button><input type="file" id="importfile" accept="application/json,.json" hidden><button class="btn" id="pdf">Reporte de actividades (PDF)</button><button class="btn" id="pdf-timeline">Cronograma (PDF horizontal)</button></nav><section class="timeline-panel"><h2>Línea de tiempo · Cronograma semanal</h2><p class="muted">Tarjetas naranja/rojo: por empezar · Verde: terminado · Barra de avance · Extensión roja: días adicionales hasta la compleción real · Línea verde: hoy · ◆: fecha real de compleción. Pulsa una barra para ir a la actividad, o pulsa el nombre/anexo de una actividad de la lista para regresar al cronograma. Un halo temporal identifica la selección.</p><div style="display:flex;gap:8px;align-items:center;margin:8px 0"><button class="btn secondary" id="timeline-mode" type="button">Vista compacta</button><span class="muted">Completa: días amplios · Compacta: días estrechos</span></div><p class="mobile-scroll-hint">Desliza el cronograma a los lados para ver otros días. Toca una barra para abrir la actividad; toca su nombre o anexo en la lista para volver aquí.</p><div class="timeline-scroll" id="timeline"></div></section><div class="columns" id="board"></div><p class="foot">Los cambios se guardan en la base de datos compartida. Los anexos se guardan en el almacenamiento privado en línea. Las notas se guardan por separado en Supabase. El respaldo JSON incluye solo referencias a archivos, no su contenido.</p>
+<section class="stats"><div class="stat"><small>Total</small><b id="total"></b></div><div class="stat"><small>Por empezar</small><b id="nstart"></b></div><div class="stat"><small>En proceso</small><b id="nprogress"></b></div><div class="stat"><small>Terminado</small><b id="ndone"></b></div></section><nav class="toolbar"><button class="btn admin-only" id="add">+ Agregar actividad</button><button class="btn secondary admin-only" id="save">Guardar cambios</button><button class="btn secondary admin-only" id="backup">Exportar respaldo JSON</button><button class="btn secondary admin-only" id="import">Importar respaldo</button><input type="file" id="importfile" accept="application/json,.json" hidden><button class="btn" id="pdf">Reporte de actividades (PDF)</button><button class="btn" id="pdf-timeline">Cronograma (PDF horizontal)</button></nav><section class="timeline-panel"><h2>Línea de tiempo · Cronograma semanal</h2><p class="muted">Tarjetas naranja/rojo: por empezar · Verde: terminado · Barra de avance · Extensión roja: días adicionales hasta la compleción real · Línea verde: hoy · ◆: fecha real de compleción. Pulsa una barra para ir a la actividad, o pulsa el nombre/anexo de una actividad de la lista para regresar al cronograma. Un halo temporal identifica la selección.</p><div style="display:flex;gap:8px;align-items:center;margin:8px 0"><button class="btn secondary" id="timeline-mode" type="button">Vista compacta</button><span class="muted">Completa: días amplios · Compacta: días estrechos</span></div><p class="mobile-scroll-hint">Desliza el cronograma a los lados para ver otros días. Toca una barra para abrir la actividad; toca su nombre o anexo en la lista para volver aquí.</p><div class="timeline-scroll" id="timeline"></div></section><section class="activity-list-tools" aria-labelledby="activity-list-heading">
+ <div class="activity-list-heading"><h2 id="activity-list-heading">Actividades del proyecto</h2>
+  <label class="activity-search">Buscar actividad<input id="search" type="search" placeholder="Nombre, anexo o número" autocomplete="off"></label></div>
+ <div id="activity-filters" class="activity-filters" role="group" aria-label="Filtrar la lista de actividades">
+  <button type="button" id="activity-filter-all" class="activity-filter" data-activity-filter="all" aria-pressed="true">Todas <span data-filter-count>0</span></button>
+  <button type="button" id="activity-filter-approval" class="activity-filter" data-activity-filter="approval" aria-pressed="false">Requieren mi aprobación <span data-filter-count>0</span></button>
+  <button type="button" id="activity-filter-overdue" class="activity-filter" data-activity-filter="overdue" aria-pressed="false">Obra atrasada <span data-filter-count>0</span></button>
+  <button type="button" id="activity-filter-closure" class="activity-filter" data-activity-filter="closure" aria-pressed="false">Cierre pendiente <span data-filter-count>0</span></button>
+ </div>
+ <div class="activity-filter-feedback"><p id="activity-filter-summary" role="status" aria-live="polite"></p><button id="activity-filters-clear" class="btn secondary" type="button" hidden>Mostrar todas</button></div>
+</section><div class="columns" id="board"></div><p class="foot">Los cambios se guardan en la base de datos compartida. Los anexos se guardan en el almacenamiento privado en línea. Las notas se guardan por separado en Supabase. El respaldo JSON incluye solo referencias a archivos, no su contenido.</p>
 </div>
 <section id="critical-path-panel" class="critical-path-panel" hidden aria-label="Ruta crítica de todos los proyectos">
  <div class="critical-heading"><div><h2>Ruta crítica · Gantt general de obra</h2>
@@ -1058,4 +1098,4 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
   <div class="attachment-preview-actions"><button type="button" class="btn" id="attachment-preview-download" data-download="" data-id="">Descargar archivo</button><button type="button" class="btn secondary" id="attachment-preview-close-bottom">Cerrar</button></div>
  </div>
 </div>
-<script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script><script src="./dydem.js?v=20261117-membresias-v34"></script><script src="./dydem-critical.js?v=20261117-gantt-pdf-v4"></script><script src="./dydem-project-users.js?v=20261117-membresias-v2"></script></body></html>
+<script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script><script src="./dydem-activity-focus.js?v=20261117-actividad-v1"></script><script src="./dydem.js?v=20261117-actividad-v35"></script><script src="./dydem-critical.js?v=20261117-gantt-pdf-v4"></script><script src="./dydem-project-users.js?v=20261117-membresias-v2"></script></body></html>
