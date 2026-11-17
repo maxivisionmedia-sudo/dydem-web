@@ -21,10 +21,9 @@ async function loadProjects(){
  if(error)throw Error('No fue posible cargar los proyectos: '+messageError(error));
  if(!data?.length)throw Error('No hay proyectos disponibles en DYDEM.');
  projectRecords=data;
- if(!data.some(p=>p.id===PROJECT_ID)){
-  const prior=storeGet(PROJECT_SELECTION_KEY);
-  PROJECT_ID=data.some(p=>p.id===prior)?prior:data[0].id;
- }
+ const prior=storeGet(PROJECT_SELECTION_KEY);
+ if(data.some(p=>p.id===prior))PROJECT_ID=prior;
+ else if(!data.some(p=>p.id===PROJECT_ID))PROJECT_ID=data[0].id;
  storeSet(PROJECT_SELECTION_KEY,PROJECT_ID);
  renderProjectPicker();
 }
@@ -1790,7 +1789,7 @@ function pdf(){
  }).join('');
  const content=`<h1>Actividades Obra DYDEM</h1><p>Semana ${wi.week} · ${wi.start} al ${wi.end} · Reporte generado ${new Date().toLocaleDateString('es-MX')}</p><p>Total: ${tasks.length}</p>${body}`;
  const css=`h1{font-size:19px}h2{font-size:12px}.activity{border:1px solid #bdc8d8;border-radius:5px;padding:9px;margin:12px 0;break-inside:avoid}table{width:100%;border-collapse:collapse}td,th{border:1px solid #cfd8e4;padding:5px 7px;text-align:left;vertical-align:top}th{background:#edf1f7;width:35%}`;
- printWindow('DYDEM - Reporte de actividades',content,css);
+ printWindow('DYDEM - '+projectName()+' - Reporte de actividades',content,css);
 }
 function pdfTimeline(){
  const d=timelineData(),DAYS=28,WEEKS=4,MAX_ROWS=22,dayMS=86400000;
@@ -1855,7 +1854,7 @@ function pdfTimeline(){
    const footerCount=chosen.length?`Actividades ${part*MAX_ROWS+1}–${part*MAX_ROWS+chosen.length} de ${visible.length} en este periodo`:'Sin actividades programadas en este periodo';
    const more=parts>1?` · Grupo ${part+1} de ${parts}`:'';
    pages.push(`<section class="rp-sheet" style="--rp-row-height:${rowHeight}mm">
-    <header class="rp-heading"><div><h1>DYDEM · Cronograma de obra</h1><p>Periodo: ${fDate(from)} – ${fDate(to)} · 4 semanas por hoja</p></div>
+    <header class="rp-heading"><div><h1>DYDEM · ${PROJECT_ID===ORIGINAL_PROJECT_ID?'Cronograma de obra':esc(projectName())}</h1><p>Periodo: ${fDate(from)} – ${fDate(to)} · 4 semanas por hoja</p></div>
     <div class="rp-info">Bloque semanal ${block+1} de ${weeksCount}${more}<br>Generado ${esc(generated)}</div></header>
     <div class="rp-board"><div class="rp-weeks">${weekHeader}</div><div class="rp-days">${days}</div>
       <div class="rp-rows">${rows||'<div class="rp-no-activities">No hay actividades programadas en estas cuatro semanas.</div>'}</div>
@@ -1934,7 +1933,7 @@ function pdfTimeline(){
  .rp-legend i.rp-delay-key{height:1.3mm;width:3.2mm;border:.4px solid #9f4150;background:#ed9faa;border-radius:0}
  @media screen{.rp-sheet{margin:0 auto 7mm;outline:1px solid #d5dce5;box-shadow:0 3px 12px #e0e6ed}}
  `;
- printWindow('DYDEM - Cronograma de obra · 4 semanas por hoja',pages.join('').replaceAll('__TOTAL__',String(pages.length)),css,true);
+ printWindow('DYDEM - '+projectName()+' · 4 semanas por hoja',pages.join('').replaceAll('__TOTAL__',String(pages.length)),css,true);
 }
 $('pdf').onclick=pdf;$('pdf-timeline').onclick=pdfTimeline;
 // Arranque sin datos de ejemplo: la base de datos es la fuente única de verdad.
