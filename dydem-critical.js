@@ -20,6 +20,21 @@ function computeCriticalCPM(rows,configuration){
    earlyStart:null,earlyEnd:null,lateStart:null,lateEnd:null,slack:null,critical:false,successors:[],effectiveDependencies:[]};
  });
  const byId=new Map(all.map(n=>[n.id,n]));
+ // Preserve previously entered Propuesta relationships as defaults.
+ // "Solo después de" points to a predecessor; "Debe completarse antes"
+ // points to a successor. An explicit critical configuration takes precedence.
+ for(const n of all){
+  if(configuration.has(n.id))continue;
+  const predecessor=Number(n.t.after);
+  if(Number.isSafeInteger(predecessor)&&predecessor>0&&byId.has(predecessor)&&
+      byId.get(predecessor).project_id===n.project_id&&predecessor!==n.id)
+   n.predecessors.push(predecessor);
+  for(const candidate of all){
+   if(candidate.id!==n.id&&candidate.project_id===n.project_id&&Number(candidate.t.before)===n.id)
+    n.predecessors.push(candidate.id);
+  }
+  n.predecessors=[...new Set(n.predecessors)];
+ }
  const selected=all.filter(n=>n.included),scheduled=selected.filter(n=>n.duration!==null),nodes=new Map(scheduled.map(n=>[n.id,n]));
  let missingLinks=0,links=0;
  for(const n of scheduled){
@@ -151,7 +166,7 @@ function renderCriticalInspector(result=computeCriticalCPM(criticalActivities,cr
  <label><input id="critical-edit-included" type="checkbox" ${node.included?'checked':''}> Incluir esta actividad en el Gantt global</label>
  <label for="critical-predecessors">Actividades predecesoras (deben terminar antes de empezar esta)</label>
  <select id="critical-predecessors" multiple size="${Math.min(9,Math.max(4,peers.length))}">${options}</select>
- <p class="muted">Mantén Ctrl (Windows) o Cmd (Mac) para seleccionar varias. Puedes vincular actividades de diferentes proyectos. Las bloqueadas se ignoran hasta volver a incluirlas.</p>
+ <p class="muted">Mantén Ctrl (Windows) o Cmd (Mac) para seleccionar varias. Puedes vincular actividades de diferentes proyectos. Las relaciones ya capturadas en Propuesta se proponen automáticamente; puedes modificarlas aquí. Las bloqueadas se ignoran hasta volver a incluirlas.</p>
  <div class="critical-config-actions"><button class="btn" type="submit">Guardar inclusión y dependencias</button>
  <span id="critical-edit-status" role="status" class="muted">${node.critical?'En la ruta crítica calculada.':node.included?'Actividad incluida.':'Actividad bloqueada.'}</span></div>
  </form>`;
@@ -233,7 +248,8 @@ async function cgSave(activityId,included,predecessors,feedback){
 $('critical-gantt').addEventListener('change',async e=>{
  const element=e.target.closest('input[data-critical-include]');
  if(!element||!isAdmin())return;
- const id=Number(element.dataset.criticalInclude),old=criticalConfiguration.get(id)||{included:true,predecessors:[]};
+ const id=Number(element.dataset.criticalInclude),calculated=computeCriticalCPM(criticalActivities,criticalConfiguration);
+ const old=criticalConfiguration.get(id)||{included:true,predecessors:calculated.byId.get(id)?.predecessors||[]};
  element.disabled=true;
  try{await cgSave(id,element.checked,old.predecessors,element.checked?'Actividad añadida al Gantt.':'Actividad bloqueada en el Gantt.')}
  catch(err){element.checked=!element.checked;element.disabled=false;alert('No se pudo modificar la inclusión: '+messageError(err))}
