@@ -313,7 +313,7 @@ async function reloadComments(projectId=PROJECT_ID){
  }
  commentsByActivity=next;
 }
-async function reloadActivities(force=false){if(!isSignedIn()||!projectRecords.length)return;const projectId=PROJECT_ID;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}
+async function reloadActivities(force=false){if(!isSignedIn()||!projectRecords.length)return;const projectId=PROJECT_ID;
  const {data:stillAllowed,error:accessError}=await cloud.from('projects').select('id').eq('id',projectId).maybeSingle();
  if(accessError)throw accessError;
  if(!stillAllowed){
@@ -331,6 +331,7 @@ async function reloadActivities(force=false){if(!isSignedIn()||!projectRecords.l
   await selectProject(projectRecords[0].id,true);
   return;
  }
+ if((saveBusy||isDirty())&&!force){refreshQueued=true;return}
  syncState('Actualizando…',false,true);try{await reconcileAttachmentIntents()}catch(err){console.warn('Pendientes de Documentado:',messageError(err))}const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',projectId).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}if(projectId!==PROJECT_ID)return;await reloadComments(projectId);if(projectId!==PROJECT_ID)return;
  try{await loadResponsibleUsers()}catch(err){console.warn('Directorio de responsables no disponible:',messageError(err))}
  tasks=(data||[]).map(r=>migrate({...r.data,id:Number(r.id)}));if(!collapsePreferencesInitialized){const saved=storeGet(COLLAPSE_KEY);if(saved===null){tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed()}collapsePreferencesInitialized=true}lastSynced=new Map(tasks.map(t=>[Number(t.id),JSON.stringify(t)]));revisions=new Map(data.map(r=>[Number(r.id),r.revision]));render();syncState('Actualizado');refreshQueued=false}
