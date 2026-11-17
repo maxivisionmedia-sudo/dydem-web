@@ -880,6 +880,72 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
  .review-files-panel{background:white!important}
  .comment-files-select,.comment-files-help,.comment-files-label{display:none!important}
 }
+
+/* DYDEM Multi-Proyecto: selección separada y Gantt crítico del Administrador. */
+#project-workspace[hidden],#critical-path-panel[hidden],#project-create-form[hidden],#project-switcher[hidden]{display:none!important}
+.project-switcher{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:12px;
+ margin:14px 0 17px;padding:15px 18px;border:1px solid #c1d1e6;border-radius:13px;background:#edf4fd}
+.project-picker{display:flex;flex-direction:column;gap:5px;min-width:min(100%,280px);flex:1}
+.project-picker>label{font-weight:800;color:#233955;font-size:13px}
+#project-select{font-size:15px;font-weight:700;max-width:100%;width:100%;padding:9px 11px;border-radius:8px;
+ border:1px solid #a8bed8;background:#fff;color:#1c3455}
+.project-switch-actions{display:flex;flex-wrap:wrap;gap:8px}
+.project-create-form{padding:16px;border:1px solid #b7c9e1;border-radius:11px;background:#f8fbff;margin-bottom:16px}
+.project-create-form h3{margin:0 0 12px}.project-create-fields{display:flex;flex-wrap:wrap;gap:12px}
+.project-create-fields label{display:flex;flex:1;min-width:210px;flex-direction:column;gap:5px;font-weight:700;font-size:13px}
+.project-create-fields input{padding:9px;border:1px solid #bacbe0;border-radius:8px;font:inherit;background:white;color:#23364b}
+.project-create-actions{display:flex;gap:9px;margin-top:13px}
+.critical-path-panel{border:1px solid #bfcee0;background:#fff;border-radius:13px;padding:15px;margin:15px 0 20px}
+.critical-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.critical-heading h2{font-size:21px;margin:0 0 6px;color:#203658}.critical-heading p{margin:0}
+.critical-summary{display:flex;gap:9px;flex-wrap:wrap;margin:14px 0}
+.critical-stat{border:1px solid #c9d6e5;border-radius:9px;padding:9px 14px;flex:1;min-width:120px;background:#f5f9fd}
+.critical-stat strong{font-size:20px;color:#224a7b;display:block}.critical-stat small{color:#596e85}
+.critical-filterbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:12px 0}
+.critical-filterbar input[type=search]{min-width:210px;flex:1;padding:10px;border-radius:8px;border:1px solid #b8c7d9}
+.critical-filterbar label{display:flex;gap:6px;align-items:center;font-size:12px;white-space:nowrap}
+.critical-gantt-scroll{overflow:auto;border:1px solid #bccbe0;border-radius:10px;background:white;max-height:65vh}
+.critical-chart{min-width:max-content;font-size:12px}
+.critical-header,.critical-activity-row,.critical-project-row{display:grid;grid-template-columns:340px var(--cg-total-width);min-width:max-content}
+.critical-header{position:sticky;top:0;z-index:6;background:white}
+.critical-header-caption{background:#edf4fd;font-weight:800;color:#243d60;padding:13px;border-right:1px solid #b5c6da;position:sticky;left:0;z-index:8}
+.critical-day-header{display:flex;height:55px;border-bottom:1px solid #a8bad0}
+.critical-day{flex:none;width:var(--cg-day-width);height:55px;display:flex;justify-content:center;flex-direction:column;
+ align-items:center;border-right:1px solid #d8e0ec;font-size:10px;color:#49627e}
+.critical-day strong{font-size:12px}.critical-day.week-shade{background:#e7f3ff}
+.critical-project-row{background:#d8e6f8;font-weight:800;color:#243f60;min-height:31px}
+.critical-project-name{padding:7px 11px;position:sticky;left:0;z-index:3;background:#d8e6f8;border-right:1px solid #adbfda}
+.critical-project-rail{background:repeating-linear-gradient(90deg,#d8e6f8 0,#d8e6f8 calc(var(--cg-day-width)*7),#f1f6fd calc(var(--cg-day-width)*7),#f1f6fd calc(var(--cg-day-width)*14))}
+.critical-activity-row{height:42px;border-bottom:1px solid #e0e6f0}
+.critical-activity-row.is-blocked{opacity:.57}
+.critical-activity-row.selected .critical-row-info{background:#fff3d8;box-shadow:inset 3px 0 #efae29}
+.critical-row-info{display:flex;align-items:center;gap:7px;min-width:0;position:sticky;left:0;z-index:3;
+ background:white;padding:4px 8px;border-right:1px solid #bfcde0}
+.critical-row-info input{flex:none}
+.critical-row-label{border:0;background:transparent;text-align:left;display:flex;flex-direction:column;min-width:0;
+ cursor:pointer;gap:2px;flex:1;color:inherit;padding:0;font-size:12px}
+.critical-row-label b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.critical-row-label small{color:#68798f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.critical-flag{font-size:10px;font-weight:800;border-radius:6px;background:#ffede9;color:#a33b2c;padding:3px;white-space:nowrap}
+.critical-rail{position:relative;overflow:hidden;background-image:repeating-linear-gradient(to right,transparent 0,transparent calc(var(--cg-day-width) - 1px),#bdc9d8 calc(var(--cg-day-width) - 1px),#bdc9d8 var(--cg-day-width));}
+.critical-rail.week-shade{background-color:#f4f9ff}
+.critical-planned{position:absolute;top:18px;height:7px;border:1px dashed #95a7bd;border-radius:2px;background:#d7e4f3;opacity:.95}
+.critical-bar{position:absolute;top:9px;height:24px;background:#7fb3e8;border:1px solid #4884bf;border-radius:6px;
+ cursor:pointer;color:#102f4e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700;
+ padding:4px 5px;font-size:11px}
+.critical-bar.is-critical{background:#ffd2c8;border:2px solid #cb4935;color:#852a22}
+.critical-bar.is-blocked{background:#d7dce5;border:1px dashed #909cad;color:#68788f}
+.critical-today{position:absolute;top:0;bottom:0;border-left:2px solid #11a66d;z-index:2;pointer-events:none}
+.critical-config-panel{margin-top:14px;border:1px solid #cad8e7;border-radius:10px;padding:15px;background:#f8fbff}
+.critical-config-panel h3{margin:0 0 7px;font-size:16px}
+.critical-config-panel label{display:block;font-size:13px;font-weight:700;margin:9px 0 5px}
+#critical-predecessors{display:block;width:100%;max-width:950px;min-height:150px;border:1px solid #b0c2d8;
+ border-radius:8px;padding:8px;background:white;color:#1f3045}
+.critical-config-panel .muted{font-size:12px}
+.critical-config-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
+.critical-note{font-size:12px;line-height:1.5;margin:12px 0 2px}
+@media(max-width:720px){.critical-header,.critical-activity-row,.critical-project-row{grid-template-columns:265px var(--cg-total-width)}
+ .critical-stat{min-width:105px}.critical-heading h2{font-size:17px}}
 </style></head><body><div id="access-gate"><div class="access-box"><h2 id="access-title">Acceso a DYDEM en línea</h2><p id="access-help">Inicia sesión con el correo electrónico de tu cuenta.</p><form id="access-form"><label>Correo electrónico<input id="access-user" type="email" required autocomplete="username" placeholder="usuario@empresa.com"></label><label>Contraseña<input id="access-pass" type="password" required autocomplete="current-password"></label><p id="access-error" role="alert"></p><button class="btn" type="submit" id="access-submit">Iniciar sesión</button></form><form id="invite-activation" hidden>
  <h3>Registro de usuario DYDEM</h3>
  <p id="invite-registration-description" class="invite-activation-description">Regístrate únicamente con el enlace de invitación autorizado por el Administrador. Se puede utilizar una sola vez.</p>
@@ -919,7 +985,41 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
  <p class="reminders-notice">La clave se guarda cifrada en Supabase Vault y nunca se muestra de nuevo. Necesitas verificar tu dominio de correo en <a href="https://resend.com/domains" target="_blank" rel="noopener noreferrer">Resend</a>. Los correos permanecen desactivados hasta completar la configuración.</p>
  <p class="reminders-error" id="email-reminders-feedback" role="status"></p>
  <div class="reminders-users" id="email-reminders-users"><strong>Activar o desactivar correos por usuario</strong><div id="email-reminders-user-list"></div></div>
- </fieldset></section><section class="stats"><div class="stat"><small>Total</small><b id="total"></b></div><div class="stat"><small>Por empezar</small><b id="nstart"></b></div><div class="stat"><small>En proceso</small><b id="nprogress"></b></div><div class="stat"><small>Terminado</small><b id="ndone"></b></div></section><nav class="toolbar"><button class="btn admin-only" id="add">+ Agregar actividad</button><input id="search" placeholder="Buscar actividad"><button class="btn secondary admin-only" id="save">Guardar cambios</button><button class="btn secondary admin-only" id="backup">Exportar respaldo JSON</button><button class="btn secondary admin-only" id="import">Importar respaldo</button><input type="file" id="importfile" accept="application/json,.json" hidden><button class="btn" id="pdf">Reporte de actividades (PDF)</button><button class="btn" id="pdf-timeline">Cronograma (PDF horizontal)</button></nav><section class="timeline-panel"><h2>Línea de tiempo · Cronograma semanal</h2><p class="muted">Tarjetas naranja/rojo: por empezar · Verde: terminado · Barra de avance · Extensión roja: días adicionales hasta la compleción real · Línea verde: hoy · ◆: fecha real de compleción. Pulsa una barra para ir a la actividad, o pulsa el nombre/anexo de una actividad de la lista para regresar al cronograma. Un halo temporal identifica la selección.</p><div style="display:flex;gap:8px;align-items:center;margin:8px 0"><button class="btn secondary" id="timeline-mode" type="button">Vista compacta</button><span class="muted">Completa: días amplios · Compacta: días estrechos</span></div><p class="mobile-scroll-hint">Desliza el cronograma a los lados para ver otros días. Toca una barra para abrir la actividad; toca su nombre o anexo en la lista para volver aquí.</p><div class="timeline-scroll" id="timeline"></div></section><div class="columns" id="board"></div><p class="foot">Los cambios se guardan en la base de datos compartida. Los anexos se guardan en el almacenamiento privado en línea. Las notas se guardan por separado en Supabase. El respaldo JSON incluye solo referencias a archivos, no su contenido.</p></main><div class="modal" id="modal" hidden><div class="modal-box"><h2 id="modal-title"></h2><p id="modal-help"></p><form id="modal-form"><div id="modal-fields" class="stack"></div><p id="modal-error" class="error"></p><div class="modal-actions"><button type="button" class="btn secondary" id="modal-cancel">Cerrar</button><button type="submit" class="btn">Guardar</button></div></form></div></div>
+ </fieldset></section>
+<section class="project-switcher" id="project-switcher">
+ <div class="project-picker"><label for="project-select">Proyecto activo</label>
+  <select id="project-select" aria-label="Seleccionar proyecto de DYDEM"></select>
+  <small id="project-description" class="muted"></small>
+ </div>
+ <div class="project-switch-actions">
+  <button type="button" id="project-new" class="btn secondary admin-only" hidden>+ Nuevo proyecto</button>
+  <button type="button" id="critical-show" class="btn secondary admin-only" hidden>Ruta crítica · Gantt general</button>
+ </div>
+</section>
+<form id="project-create-form" class="project-create-form" hidden>
+ <h3>Crear proyecto independiente</h3>
+ <div class="project-create-fields"><label>Nombre del proyecto<input id="project-create-name" maxlength="120" minlength="3" required placeholder="Ej. Instalaciones eléctricas"></label>
+ <label>Descripción (opcional)<input id="project-create-description" maxlength="3000" placeholder="Alcance del proyecto"></label></div>
+ <div class="project-create-actions"><button class="btn" type="submit" id="project-create-submit">Crear proyecto</button><button class="btn secondary" type="button" id="project-create-cancel">Cancelar</button></div>
+ <p id="project-create-error" class="error" role="status"></p>
+</form>
+<div id="project-workspace">
+<section class="stats"><div class="stat"><small>Total</small><b id="total"></b></div><div class="stat"><small>Por empezar</small><b id="nstart"></b></div><div class="stat"><small>En proceso</small><b id="nprogress"></b></div><div class="stat"><small>Terminado</small><b id="ndone"></b></div></section><nav class="toolbar"><button class="btn admin-only" id="add">+ Agregar actividad</button><input id="search" placeholder="Buscar actividad"><button class="btn secondary admin-only" id="save">Guardar cambios</button><button class="btn secondary admin-only" id="backup">Exportar respaldo JSON</button><button class="btn secondary admin-only" id="import">Importar respaldo</button><input type="file" id="importfile" accept="application/json,.json" hidden><button class="btn" id="pdf">Reporte de actividades (PDF)</button><button class="btn" id="pdf-timeline">Cronograma (PDF horizontal)</button></nav><section class="timeline-panel"><h2>Línea de tiempo · Cronograma semanal</h2><p class="muted">Tarjetas naranja/rojo: por empezar · Verde: terminado · Barra de avance · Extensión roja: días adicionales hasta la compleción real · Línea verde: hoy · ◆: fecha real de compleción. Pulsa una barra para ir a la actividad, o pulsa el nombre/anexo de una actividad de la lista para regresar al cronograma. Un halo temporal identifica la selección.</p><div style="display:flex;gap:8px;align-items:center;margin:8px 0"><button class="btn secondary" id="timeline-mode" type="button">Vista compacta</button><span class="muted">Completa: días amplios · Compacta: días estrechos</span></div><p class="mobile-scroll-hint">Desliza el cronograma a los lados para ver otros días. Toca una barra para abrir la actividad; toca su nombre o anexo en la lista para volver aquí.</p><div class="timeline-scroll" id="timeline"></div></section><div class="columns" id="board"></div><p class="foot">Los cambios se guardan en la base de datos compartida. Los anexos se guardan en el almacenamiento privado en línea. Las notas se guardan por separado en Supabase. El respaldo JSON incluye solo referencias a archivos, no su contenido.</p>
+</div>
+<section id="critical-path-panel" class="critical-path-panel" hidden aria-label="Ruta crítica de todos los proyectos">
+ <div class="critical-heading"><div><h2>Ruta crítica · Gantt general de obra</h2>
+  <p class="muted">Vista exclusiva para el Administrador. Incluye o bloquea actividades de cualquier proyecto y define las dependencias que determinan la ruta crítica.</p></div>
+  <button class="btn secondary" type="button" id="critical-close">Volver al proyecto</button></div>
+ <div id="critical-summary" class="critical-summary"></div>
+ <div class="critical-filterbar"><input id="critical-search" type="search" placeholder="Buscar proyecto, anexo o actividad" aria-label="Buscar actividades del Gantt">
+ <label><input id="critical-only-included" type="checkbox"> Solo incluidas</label>
+ <label><input id="critical-only-critical" type="checkbox"> Solo críticas</label>
+ <button type="button" class="btn secondary" id="critical-refresh">Actualizar Gantt</button></div>
+ <div id="critical-gantt" class="critical-gantt-scroll"><p>Cargando actividades de todos los proyectos…</p></div>
+ <div class="critical-config-panel" id="critical-config-panel"><h3>Dependencias y selección</h3>
+  <p class="muted">Selecciona una actividad del Gantt para configurar qué actividades deben terminar antes de que comience. Las dependencias pueden enlazar proyectos distintos.</p></div>
+ <p class="critical-note muted">Método CPM: relaciones fin a inicio, sin desfases y con días naturales. Las fechas calculadas pueden desplazarse por dependencias. Si faltan fechas o dependencias, el resultado se marca provisional. Las actividades bloqueadas no intervienen en el cálculo.</p>
+</section></main><div class="modal" id="modal" hidden><div class="modal-box"><h2 id="modal-title"></h2><p id="modal-help"></p><form id="modal-form"><div id="modal-fields" class="stack"></div><p id="modal-error" class="error"></p><div class="modal-actions"><button type="button" class="btn secondary" id="modal-cancel">Cerrar</button><button type="submit" class="btn">Guardar</button></div></form></div></div>
 <div class="modal" id="attachment-preview" role="dialog" aria-modal="true" aria-label="Vista previa de archivo" hidden>
  <div class="modal-box">
   <div class="attachment-preview-header"><h2 id="attachment-preview-title">Vista previa</h2><button type="button" class="btn secondary" id="attachment-preview-close" aria-label="Cerrar vista previa">Cerrar ×</button></div>
