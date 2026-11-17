@@ -217,7 +217,7 @@ $('project-create-form').onsubmit=async e=>{
   if(!data?.id)throw Error('El servidor no devolvió el proyecto creado.');
   await loadProjects();
   $('project-create-form').reset();$('project-create-form').hidden=true;
-  await selectProject(String(data.id));
+  await selectProject(String(data.id),true);
  }catch(err){$('project-create-error').textContent='No se pudo crear el proyecto: '+messageError(err)}
  finally{btn.disabled=false}
 };
