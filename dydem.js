@@ -1,6 +1,48 @@
 const names=['Propuesta','Revisión','Autorizado','Avance de Obra','Verificación','Evidencia','Finalizado'];
 const KEY='dydem-actividades-v2', OLD='dydem-actividades-v1';
-const PROJECT_ID='00000000-0000-4000-8000-00000000d1de';
+const ORIGINAL_PROJECT_ID='00000000-0000-4000-8000-00000000d1de';
+let PROJECT_ID=ORIGINAL_PROJECT_ID;
+const PROJECT_SELECTION_KEY='dydem-selected-project-v1';
+let projectRecords=[{id:ORIGINAL_PROJECT_ID,name:'Obra DYDEM',description:''}];
+let criticalMode=false,criticalActivities=[],criticalConfiguration=new Map(),criticalSelectedId=null;
+function currentProject(){return projectRecords.find(p=>p.id===PROJECT_ID)||{id:PROJECT_ID,name:'Proyecto sin nombre',description:''}}
+function projectName(){return currentProject().name}
+function projectLabel(id){return projectRecords.find(p=>p.id===id)?.name||'Proyecto no disponible'}
+function renderProjectPicker(){
+ const select=$('project-select');if(!select)return;
+ select.innerHTML=projectRecords.map(p=>`<option value="${esc(p.id)}" ${p.id===PROJECT_ID?'selected':''}>${esc(p.name)}</option>`).join('');
+ $('project-description').textContent=currentProject().description||'Cada proyecto tiene su propio cronograma, actividades y documentos.';
+ $('project-new').hidden=!isAdmin();$('critical-show').hidden=!isAdmin();
+ $('project-switcher').hidden=!isSignedIn();
+}
+async function loadProjects(){
+ if(!isSignedIn())return;
+ const {data,error}=await cloud.from('projects').select('id,name,description,created_at').order('created_at',{ascending:true});
+ if(error)throw Error('No fue posible cargar los proyectos: '+messageError(error));
+ if(!data?.length)throw Error('No hay proyectos disponibles en DYDEM.');
+ projectRecords=data;
+ if(!data.some(p=>p.id===PROJECT_ID)){
+  const prior=storeGet(PROJECT_SELECTION_KEY);
+  PROJECT_ID=data.some(p=>p.id===prior)?prior:data[0].id;
+ }
+ storeSet(PROJECT_SELECTION_KEY,PROJECT_ID);
+ renderProjectPicker();
+}
+async function selectProject(id){
+ if(!isSignedIn()||!projectRecords.some(p=>p.id===id))return;
+ if(PROJECT_ID===id&&!criticalMode)return;
+ if(saveBusy){alert('Hay un guardado en proceso. Intenta cambiar de proyecto después.');renderProjectPicker();return}
+ if(isDirty()&&!confirm('Hay cambios sin guardar. ¿Cambiar de proyecto y descartarlos?')){renderProjectPicker();return}
+ PROJECT_ID=id;storeSet(PROJECT_SELECTION_KEY,id);criticalMode=false;
+ $('critical-path-panel').hidden=true;$('project-workspace').hidden=false;
+ $('project-create-form').hidden=true;
+ closeAttachmentPreview();tasks=[];commentsByActivity.clear();commentDrafts.clear();commentFileRefsDrafts.clear();
+ lastSynced.clear();revisions.clear();openStageByActivity.clear();
+ selectedActivityId=null;renderProjectPicker();render();
+ try{await reloadActivities(true);startRealtime();syncState('Proyecto: '+projectName())}
+ catch(err){syncState('Error al cambiar de proyecto',true);alert(messageError(err))}
+}
+
 const fallbackStorage=new Map();
 function storeGet(key){try{return localStorage.getItem(key)}catch(e){return fallbackStorage.get(key)??null}}
 function storeSet(key,value){fallbackStorage.set(key,value);try{localStorage.setItem(key,value);return true}catch(e){return false}}
@@ -226,7 +268,7 @@ function enterAccount(profile){
  currentAccount={...profile,name};
  const welcome=$('welcome-user');
  if(welcome){welcome.textContent='Sesión iniciada como: '+name;welcome.hidden=false}
- $('add').hidden=!canAddActivity();$('save').hidden=!canEditAnyStep();document.body.classList.add('signed-in');document.body.classList.toggle('viewer-mode',!isAdmin()&&!isCustom());document.body.classList.toggle('custom-mode',isCustom());if(recoverMode)showRecoveryForm();else {$('access-gate').hidden=true;$('reset-container').hidden=true;}$('session-label').textContent='Conectado: '+currentAccount.name+' · '+roleLabel(currentAccount.role);$('manage-users').hidden=!isAdmin();$('user-management').hidden=true;render();}
+ $('add').hidden=!canAddActivity();$('save').hidden=!canEditAnyStep();document.body.classList.add('signed-in');document.body.classList.toggle('viewer-mode',!isAdmin()&&!isCustom());document.body.classList.toggle('custom-mode',isCustom());if(recoverMode)showRecoveryForm();else {$('access-gate').hidden=true;$('reset-container').hidden=true;}$('session-label').textContent='Conectado: '+currentAccount.name+' · '+roleLabel(currentAccount.role);$('manage-users').hidden=!isAdmin();$('user-management').hidden=true;$('project-switcher').hidden=false;renderProjectPicker();render();}
 async function loadAccount(){const {data:sessionData,error:sessionError}=await cloud.auth.getSession();if(sessionError)throw sessionError;const user=sessionData.session?.user;if(!user){await leaveAccount(false);return}const {data:profile,error}=await cloud.from('profiles').select('id,email,display_name,role,permissions,active').eq('id',user.id).single();if(error||!profile||!profile.active){await cloud.auth.signOut();throw Error('Esta cuenta no tiene acceso activo a DYDEM. Consulta a un administrador.')}
  // Register last login and resolve a missing display_name from the account.
  // The registered profile name always takes precedence over editable metadata.
@@ -238,20 +280,23 @@ async function loadAccount(){const {data:sessionData,error:sessionError}=await c
  }catch(registrationError){
   console.warn('No se pudo registrar la fecha de acceso:',messageError(registrationError));
  }
- enterAccount({...profile,display_name:loginName||user.user_metadata?.display_name||profile.email});await reloadActivities(true);startRealtime();if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
-async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;tasks=[];commentsByActivity.clear();pendingAttachmentIntents.clear();pendingFileRegistrations.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');if($('welcome-user')){$('welcome-user').textContent='';$('welcome-user').hidden=true}$('access-gate').hidden=false;$('user-management').hidden=true;
+ enterAccount({...profile,display_name:loginName||user.user_metadata?.display_name||profile.email});await loadProjects();await reloadActivities(true);startRealtime();if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
+async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;PROJECT_ID=ORIGINAL_PROJECT_ID;projectRecords=[{id:ORIGINAL_PROJECT_ID,name:'Obra DYDEM',description:''}];criticalMode=false;criticalActivities=[];criticalConfiguration.clear();criticalSelectedId=null;
+ $('project-switcher').hidden=true;$('project-create-form').hidden=true;$('project-workspace').hidden=false;$('critical-path-panel').hidden=true;
+ tasks=[];commentsByActivity.clear();pendingAttachmentIntents.clear();pendingFileRegistrations.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');if($('welcome-user')){$('welcome-user').textContent='';$('welcome-user').hidden=true}$('access-gate').hidden=false;$('user-management').hidden=true;
  if($('generated-invitation')){
   $('generated-invitation').hidden=true;
   $('generated-invitation-link').value='';
  }
  $('access-pass').value='';render();syncState('Sin sesión')}
 function isDirty(){return tasks.some(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)))}
-async function reloadComments(){
+async function reloadComments(projectId=PROJECT_ID){
  if(!isSignedIn())return;
  const {data,error}=await cloud.from('activity_comments')
   .select('id,activity_id,body,created_at,author_id,author_name,thread,attachment_refs')
-  .eq('project_id',PROJECT_ID).order('created_at',{ascending:true}).order('id',{ascending:true});
+  .eq('project_id',projectId).order('created_at',{ascending:true}).order('id',{ascending:true});
  if(error)throw error;
+ if(projectId!==PROJECT_ID)return;
  const next=new Map();
  for(const item of (data||[])){
   const key=(item.thread==='dudas'?'dudas':'notes')+':'+Number(item.activity_id);
@@ -260,11 +305,11 @@ async function reloadComments(){
  }
  commentsByActivity=next;
 }
-async function reloadActivities(force=false){if(!isSignedIn())return;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}syncState('Actualizando…',false,true);try{await reconcileAttachmentIntents()}catch(err){console.warn('Pendientes de Documentado:',messageError(err))}const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',PROJECT_ID).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}await reloadComments();
+async function reloadActivities(force=false){if(!isSignedIn())return;const projectId=PROJECT_ID;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}syncState('Actualizando…',false,true);try{await reconcileAttachmentIntents()}catch(err){console.warn('Pendientes de Documentado:',messageError(err))}const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',projectId).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}if(projectId!==PROJECT_ID)return;await reloadComments(projectId);if(projectId!==PROJECT_ID)return;
  try{await loadResponsibleUsers()}catch(err){console.warn('Directorio de responsables no disponible:',messageError(err))}
  tasks=(data||[]).map(r=>migrate({...r.data,id:Number(r.id)}));if(!collapsePreferencesInitialized){const saved=storeGet(COLLAPSE_KEY);if(saved===null){tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed()}collapsePreferencesInitialized=true}lastSynced=new Map(tasks.map(t=>[Number(t.id),JSON.stringify(t)]));revisions=new Map(data.map(r=>[Number(r.id),r.revision]));render();syncState('Actualizado');refreshQueued=false}
 function scheduleCloudRefresh(){if(refreshDelay)clearTimeout(refreshDelay);refreshDelay=setTimeout(()=>{refreshDelay=null;reloadActivities().catch(e=>syncState('No se pudo sincronizar',true))},450)}
-function startRealtime(){if(subscription){cloud.removeChannel(subscription);subscription=null}subscription=cloud.channel('dydem-obra-shared').on('postgres_changes',{event:'*',schema:'public',table:'activities',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'INSERT',schema:'public',table:'activity_comments',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'DELETE',schema:'public',table:'activity_comments'},()=>scheduleCloudRefresh()).subscribe();if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(isSignedIn())reloadActivities().catch(()=>syncState('Error de actualización',true))},15000)}
+function startRealtime(){if(subscription){cloud.removeChannel(subscription);subscription=null}subscription=cloud.channel('dydem-obra-'+PROJECT_ID).on('postgres_changes',{event:'*',schema:'public',table:'activities',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'INSERT',schema:'public',table:'activity_comments',filter:`project_id=eq.${PROJECT_ID}`},()=>scheduleCloudRefresh()).on('postgres_changes',{event:'DELETE',schema:'public',table:'activity_comments'},()=>scheduleCloudRefresh()).subscribe();if(refreshTimer)clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(isSignedIn())reloadActivities().catch(()=>syncState('Error de actualización',true))},15000)}
 async function save(){if(!canEditAnyStep())return;savePending=true;if(saveBusy)return;saveBusy=true;syncState('Guardando…',false,true);
  try{while(savePending){savePending=false;const changed=tasks.filter(t=>JSON.stringify(t)!==lastSynced.get(Number(t.id)));
   for(const t of changed){const id=Number(t.id),expected=revisions.get(id);if(expected===undefined)throw Error('Actividad sin versión de servidor: '+id);const sent=JSON.stringify(t);const {data,error}=await cloud.rpc(isAdmin()?'update_activity':'update_activity_custom',{p_id:id,p_expected_revision:expected,p_data:JSON.parse(sent)});if(error)throw error;const saved=migrate({...data.data,id});Object.assign(t,saved);revisions.set(id,data.revision);lastSynced.set(id,JSON.stringify(saved));}
@@ -1147,7 +1192,7 @@ window.addEventListener('resize',()=>{
  const host=$('timeline');
  if(host)host.innerHTML=timelineHTML(false,compactTimeline,mobile);
 });
-function render(){rememberOpenStages();const w=weekInfo();document.querySelector('header small').textContent=`CONTROL DE OBRA · SEMANA ${w.week} / ${w.year}`;document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;let q=$('search').value.toLowerCase();const counts={'Por empezar':0,'En proceso':0,'Terminado':0};tasks.forEach(t=>counts[status(t)]++);$('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];$('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];const banner=$('pending-approvals-banner');
+function render(){rememberOpenStages();const w=weekInfo();document.querySelector('header small').textContent=`CONTROL DE OBRA · ${projectName().toUpperCase()} · SEMANA ${w.week} / ${w.year}`;document.querySelector('header p').textContent=`Semana actual: ${w.start} al ${w.end} · Seguimiento por 7 etapas`;let q=$('search').value.toLowerCase();const counts={'Por empezar':0,'En proceso':0,'Terminado':0};tasks.forEach(t=>counts[status(t)]++);$('total').textContent=tasks.length;$('nstart').textContent=counts['Por empezar'];$('nprogress').textContent=counts['En proceso'];$('ndone').textContent=counts['Terminado'];const banner=$('pending-approvals-banner');
  if(banner){
   const pending=tasks.filter(needsMyApproval).length;
   banner.hidden=!pending;
@@ -1705,10 +1750,10 @@ $('attachment-preview').addEventListener('click',e=>{if(e.target===$('attachment
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('attachment-preview').hidden)closeAttachmentPreview()});
 $('modal-fields').addEventListener('change',e=>{if(e.target.id!=='attachments-input')return;const files=[...e.target.files];const status=$('attachment-upload-status');if(!status)return;if(files.some(f=>f.size>MAX_ATTACHMENT_BYTES))status.textContent='No está permitido subir archivos de más de 500 MB.';else if(files.some(f=>f.size>CURRENT_STORAGE_LIMIT_BYTES))status.textContent='Advertencia: alguno supera los 50 MB que permite el almacenamiento actual de Supabase.';else status.textContent=files.length?files.length+' archivo(s) listos para subir al guardar.':''});
 
-$('add').onclick=async()=>{if(!canAddActivity())return;let title=prompt('Descripción de la nueva actividad:');if(!title?.trim())return;syncState('Creando actividad…',false,true);const {data,error}=await cloud.rpc('create_activity',{p_title:title.trim()});if(error){syncState('Error al crear',true);alert(messageError(error));return}const id=Number(data.id);collapsedActivities.add(String(id));persistCollapsed();await reloadActivities(true);if(isAdmin())startup()};
+$('add').onclick=async()=>{if(!canAddActivity())return;let title=prompt('Descripción de la nueva actividad:');if(!title?.trim())return;syncState('Creando actividad…',false,true);const {data,error}=await cloud.rpc('create_activity',{p_title:title.trim(),p_project_id:PROJECT_ID});if(error){syncState('Error al crear',true);alert(messageError(error));return}const id=Number(data.id);collapsedActivities.add(String(id));persistCollapsed();await reloadActivities(true);if(isAdmin())startup()};
 $('search').oninput=render;
 $('save').onclick=async()=>{if(!canEditAnyStep())return;await save();if(!isDirty())alert('Información guardada en DYDEM en línea.')};
-$('backup').onclick=()=>{if(!isAdmin())return;let blob=new Blob([JSON.stringify({project:'DYDEM',version:3,exportedAt:new Date().toISOString(),tasks},null,2)],{type:'application/json'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='respaldo_dydem_'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)};
+$('backup').onclick=()=>{if(!isAdmin())return;let blob=new Blob([JSON.stringify({project:'DYDEM',project_id:PROJECT_ID,project_name:projectName(),version:4,exportedAt:new Date().toISOString(),tasks},null,2)],{type:'application/json'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='respaldo_dydem_'+projectName().toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,30)+'_'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)};
 $('import').onclick=()=>{if(isAdmin())$('importfile').click()};
 $('importfile').onchange=async e=>{if(!isAdmin())return;try{let data=JSON.parse(await e.target.files[0].text());if(!Array.isArray(data.tasks))throw Error('Archivo inválido');if(!confirm('La importación inicial solo se permite cuando la base de datos está vacía. Los archivos adjuntos no se transfieren en el JSON y deberán subirse de nuevo. ¿Continuar?'))return;syncState('Importando…',false,true);const {data:response,error}=await cloud.rpc('import_initial_activities',{p_activities:data.tasks.map(migrate)});if(error)throw error;collapsedActivities.clear();await reloadActivities(true);tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed();render();alert('Importadas '+response+' actividades. Recuerda volver a subir los anexos originales.')}catch(err){syncState('Error de importación',true);alert('Error al importar: '+messageError(err))}e.target.value=''};
 function printWindow(title,content,css,landscape=false){
