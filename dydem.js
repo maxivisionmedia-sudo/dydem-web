@@ -12,14 +12,20 @@ function renderProjectPicker(){
  const select=$('project-select');if(!select)return;
  select.innerHTML=projectRecords.map(p=>`<option value="${esc(p.id)}" ${p.id===PROJECT_ID?'selected':''}>${esc(p.name)}</option>`).join('');
  $('project-description').textContent=currentProject().description||'Cada proyecto tiene su propio cronograma, actividades y documentos.';
- $('project-new').hidden=!isAdmin();$('critical-show').hidden=!isAdmin();
+ $('project-new').hidden=!isAdmin();$('critical-show').hidden=!isAdmin();$('project-members-manage').hidden=!isAdmin();
  $('project-switcher').hidden=!isSignedIn();
 }
 async function loadProjects(){
  if(!isSignedIn())return;
  const {data,error}=await cloud.from('projects').select('id,name,description,created_at').order('created_at',{ascending:true});
  if(error)throw Error('No fue posible cargar los proyectos: '+messageError(error));
- if(!data?.length)throw Error('No hay proyectos disponibles en DYDEM.');
+ if(!data?.length){
+   projectRecords=[];tasks=[];commentsByActivity.clear();lastSynced.clear();revisions.clear();
+   $('project-workspace').hidden=true;$('project-switcher').hidden=true;
+   syncState('Tu cuenta no tiene proyectos asignados. Solicita acceso al Administrador.',true);
+   return;
+ }
+ $('project-workspace').hidden=criticalMode;
  projectRecords=data;
  const prior=storeGet(PROJECT_SELECTION_KEY);
  if(data.some(p=>p.id===prior))PROJECT_ID=prior;
@@ -33,6 +39,7 @@ async function selectProject(id,discardAlreadyConfirmed=false){
  if(saveBusy){alert('Hay un guardado en proceso. Intenta cambiar de proyecto después.');renderProjectPicker();return}
  if(isDirty()&&!discardAlreadyConfirmed&&!confirm('Hay cambios sin guardar. ¿Cambiar de proyecto y descartarlos?')){renderProjectPicker();return}
  PROJECT_ID=id;storeSet(PROJECT_SELECTION_KEY,id);criticalMode=false;
+ if($('project-users-panel'))$('project-users-panel').hidden=true;
  $('critical-path-panel').hidden=true;$('project-workspace').hidden=false;
  $('project-create-form').hidden=true;
  closeAttachmentPreview();tasks=[];commentsByActivity.clear();commentDrafts.clear();commentFileRefsDrafts.clear();
@@ -279,7 +286,9 @@ async function loadAccount(){const {data:sessionData,error:sessionError}=await c
  }catch(registrationError){
   console.warn('No se pudo registrar la fecha de acceso:',messageError(registrationError));
  }
- enterAccount({...profile,display_name:loginName||user.user_metadata?.display_name||profile.email});await loadProjects();await reloadActivities(true);startRealtime();if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
+ enterAccount({...profile,display_name:loginName||user.user_metadata?.display_name||profile.email});await loadProjects();
+ if(projectRecords.length){await reloadActivities(true);startRealtime()}else syncState('Tu cuenta no tiene proyectos asignados. Solicita acceso al Administrador.',true);
+ if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
 async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;PROJECT_ID=ORIGINAL_PROJECT_ID;projectRecords=[{id:ORIGINAL_PROJECT_ID,name:'Obra DYDEM',description:''}];criticalMode=false;criticalActivities=[];criticalConfiguration.clear();criticalSelectedId=null;
  $('project-switcher').hidden=true;$('project-create-form').hidden=true;$('project-workspace').hidden=false;$('critical-path-panel').hidden=true;
  tasks=[];commentsByActivity.clear();pendingAttachmentIntents.clear();pendingFileRegistrations.clear();commentDrafts.clear();lastSynced.clear();revisions.clear();document.body.classList.remove('signed-in','viewer-mode','custom-mode');if($('welcome-user')){$('welcome-user').textContent='';$('welcome-user').hidden=true}$('access-gate').hidden=false;$('user-management').hidden=true;
@@ -304,7 +313,25 @@ async function reloadComments(projectId=PROJECT_ID){
  }
  commentsByActivity=next;
 }
-async function reloadActivities(force=false){if(!isSignedIn())return;const projectId=PROJECT_ID;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}syncState('Actualizando…',false,true);try{await reconcileAttachmentIntents()}catch(err){console.warn('Pendientes de Documentado:',messageError(err))}const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',projectId).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}if(projectId!==PROJECT_ID)return;await reloadComments(projectId);if(projectId!==PROJECT_ID)return;
+async function reloadActivities(force=false){if(!isSignedIn()||!projectRecords.length)return;const projectId=PROJECT_ID;if((saveBusy||isDirty())&&!force){refreshQueued=true;return}
+ const {data:stillAllowed,error:accessError}=await cloud.from('projects').select('id').eq('id',projectId).maybeSingle();
+ if(accessError)throw accessError;
+ if(!stillAllowed){
+  tasks=[];commentsByActivity.clear();lastSynced.clear();revisions.clear();
+  const {data:available,error:availableError}=await cloud.from('projects').select('id,name,description,created_at').order('created_at',{ascending:true});
+  if(availableError)throw availableError;
+  projectRecords=available||[];
+  if(!projectRecords.length){
+   if(subscription){cloud.removeChannel(subscription);subscription=null}
+   if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}
+   $('project-workspace').hidden=true;$('project-switcher').hidden=true;
+   syncState('Se retiró tu acceso al proyecto. No tienes otros proyectos asignados.',true);return;
+  }
+  PROJECT_ID=projectId;
+  await selectProject(projectRecords[0].id,true);
+  return;
+ }
+ syncState('Actualizando…',false,true);try{await reconcileAttachmentIntents()}catch(err){console.warn('Pendientes de Documentado:',messageError(err))}const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',projectId).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}if(projectId!==PROJECT_ID)return;await reloadComments(projectId);if(projectId!==PROJECT_ID)return;
  try{await loadResponsibleUsers()}catch(err){console.warn('Directorio de responsables no disponible:',messageError(err))}
  tasks=(data||[]).map(r=>migrate({...r.data,id:Number(r.id)}));if(!collapsePreferencesInitialized){const saved=storeGet(COLLAPSE_KEY);if(saved===null){tasks.forEach(t=>collapsedActivities.add(String(t.id)));persistCollapsed()}collapsePreferencesInitialized=true}lastSynced=new Map(tasks.map(t=>[Number(t.id),JSON.stringify(t)]));revisions=new Map(data.map(r=>[Number(r.id),r.revision]));render();syncState('Actualizado');refreshQueued=false}
 function scheduleCloudRefresh(){if(refreshDelay)clearTimeout(refreshDelay);refreshDelay=setTimeout(()=>{refreshDelay=null;reloadActivities().catch(e=>syncState('No se pudo sincronizar',true))},450)}
@@ -1273,7 +1300,7 @@ async function editStep(t,i){
  if(approvalStageKey(i)!==null){
   let eligible=[];
   try{
-   const {data,error}=await cloud.rpc('list_dydem_stage_responsibles',{p_stage:Number(i)});
+   const {data,error}=await cloud.rpc('dydem_list_project_stage_responsibles',{pid:PROJECT_ID,stage:Number(i)});
    if(error)throw error;
    eligible=Array.isArray(data)?data:[];
   }catch(err){alert('No se pudo consultar los usuarios activos: '+messageError(err));return}
@@ -1282,7 +1309,7 @@ async function editStep(t,i){
   const fields=`<fieldset class="responsible-chooser"><legend>Usuarios Responsables</legend>
    ${options||'<p>No hay usuarios activos disponibles.</p>'}
    </fieldset><p class="muted">${i===2?'<strong>Obligatorio:</strong> en Autorizado debes asignar por lo menos un usuario responsable. No existe aprobación administrativa sin responsables. ':'La asignación de responsables es opcional en esta etapa. '}Cada responsable asignado deberá confirmar. Cambiar los responsables reiniciará las aprobaciones anteriores.</p>`;
-  modal(`${names[i]} · Actividad ${t.annex}`,'Puedes asignar a cualquier usuario activo de DYDEM. Solo los responsables asignados podrán aprobar usando su propia cuenta.',fields,{type:'assign',id:t.id,step:i});
+  modal(`${names[i]} · Actividad ${t.annex}`,'Solo puedes asignar usuarios que tengan acceso a este proyecto. Gestiona el acceso desde «Usuarios del proyecto». Solo los responsables asignados podrán aprobar usando su propia cuenta.',fields,{type:'assign',id:t.id,step:i});
   return;
  }
  if(i===5){
