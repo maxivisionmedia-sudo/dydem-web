@@ -47,8 +47,9 @@ $('project-users-form').onsubmit=async event=>{
   const {data,error}=await cloud.rpc('dydem_set_project_users',{pid:projectId,ids:selected});
   if(error)throw error;
   if(!data?.ok||String(data.project_id)!==projectId)throw Error('El servidor no confirmó los permisos.');
-  status.textContent='Acceso actualizado: '+data.members+' usuario(s) asignado(s), más todos los administradores.';
+  const success='Acceso actualizado: '+data.members+' usuario(s) asignado(s), más todos los administradores.';
   await openProjectUsersPanelRefresh();
+  $('project-users-status').textContent=success;
  }catch(err){status.textContent='No se pudieron guardar los accesos: '+messageError(err)}
  finally{save.disabled=false}
 };
