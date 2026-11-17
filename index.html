@@ -946,6 +946,23 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
 .critical-note{font-size:12px;line-height:1.5;margin:12px 0 2px}
 @media(max-width:720px){.critical-header,.critical-activity-row,.critical-project-row{grid-template-columns:265px var(--cg-total-width)}
  .critical-stat{min-width:105px}.critical-heading h2{font-size:17px}}
+
+/* DYDEM: administrar membresías de proyectos sin tocar el rol global. */
+.project-users-panel{margin:-8px 0 18px;padding:16px 18px;border:1px solid #b7cbe0;border-radius:12px;background:#f6faff}
+.project-users-panel[hidden]{display:none!important}
+.project-users-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.project-users-header h3{font-size:17px;margin:0 0 5px;color:#274466}
+.project-users-header p{font-size:12px;margin:0 0 8px}
+.project-users-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));gap:8px;margin-top:10px}
+.project-users-entry{background:#fff;display:flex;align-items:center;gap:10px;border:1px solid #d4e0ed;border-radius:9px;padding:9px 12px;cursor:pointer}
+.project-users-entry input{width:18px;height:18px;flex:none;accent-color:#1e5bc6}
+.project-users-entry span{display:flex;flex-direction:column;min-width:0;gap:3px;overflow-wrap:anywhere}
+.project-users-entry b{font-size:13px;color:#273c58}
+.project-users-entry small{font-size:11px;color:#6b7c91}
+.project-users-footer{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:12px}
+#project-users-status{font-size:12px;color:#365777;white-space:normal}
+#critical-print{white-space:nowrap}
+@media(max-width:650px){.project-users-header{flex-wrap:wrap}.project-users-list{grid-template-columns:1fr}}
 </style></head><body><div id="access-gate"><div class="access-box"><h2 id="access-title">Acceso a DYDEM en línea</h2><p id="access-help">Inicia sesión con el correo electrónico de tu cuenta.</p><form id="access-form"><label>Correo electrónico<input id="access-user" type="email" required autocomplete="username" placeholder="usuario@empresa.com"></label><label>Contraseña<input id="access-pass" type="password" required autocomplete="current-password"></label><p id="access-error" role="alert"></p><button class="btn" type="submit" id="access-submit">Iniciar sesión</button></form><form id="invite-activation" hidden>
  <h3>Registro de usuario DYDEM</h3>
  <p id="invite-registration-description" class="invite-activation-description">Regístrate únicamente con el enlace de invitación autorizado por el Administrador. Se puede utilizar una sola vez.</p>
@@ -993,8 +1010,20 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
  </div>
  <div class="project-switch-actions">
   <button type="button" id="project-new" class="btn secondary admin-only" hidden>+ Nuevo proyecto</button>
+  <button type="button" id="project-members-manage" class="btn secondary admin-only" hidden><span aria-hidden="true">👥</span> Usuarios del proyecto</button>
   <button type="button" id="critical-show" class="btn secondary admin-only" hidden>Ruta crítica · Gantt general</button>
  </div>
+</section>
+<section id="project-users-panel" class="project-users-panel" hidden aria-label="Usuarios con acceso al proyecto">
+ <form id="project-users-form">
+  <div class="project-users-header"><div><h3 id="project-users-title">Usuarios del proyecto</h3>
+    <p id="project-users-admins" class="muted"></p></div>
+    <button id="project-users-cancel" class="btn secondary" type="button">Cerrar</button></div>
+  <p id="project-users-description" class="muted">Selecciona usuarios autorizados a entrar en este proyecto.</p>
+  <div id="project-users-list" class="project-users-list"></div>
+  <div class="project-users-footer"><button class="btn" id="project-users-save" type="submit">Guardar acceso al proyecto</button>
+   <span id="project-users-status" role="status"></span></div>
+ </form>
 </section>
 <form id="project-create-form" class="project-create-form" hidden>
  <h3>Crear proyecto independiente</h3>
@@ -1014,7 +1043,8 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
  <div class="critical-filterbar"><input id="critical-search" type="search" placeholder="Buscar proyecto, anexo o actividad" aria-label="Buscar actividades del Gantt">
  <label><input id="critical-only-included" type="checkbox"> Solo incluidas</label>
  <label><input id="critical-only-critical" type="checkbox"> Solo críticas</label>
- <button type="button" class="btn secondary" id="critical-refresh">Actualizar Gantt</button></div>
+ <button type="button" class="btn secondary" id="critical-refresh">Actualizar Gantt</button>
+ <button type="button" class="btn" id="critical-print"><span aria-hidden="true">🖨</span> Exportar Gantt a PDF</button></div>
  <div id="critical-gantt" class="critical-gantt-scroll"><p>Cargando actividades de todos los proyectos…</p></div>
  <div class="critical-config-panel" id="critical-config-panel"><h3>Dependencias y selección</h3>
   <p class="muted">Selecciona una actividad del Gantt para configurar qué actividades deben terminar antes de que comience. Las dependencias pueden enlazar proyectos distintos.</p></div>
@@ -1028,4 +1058,4 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
   <div class="attachment-preview-actions"><button type="button" class="btn" id="attachment-preview-download" data-download="" data-id="">Descargar archivo</button><button type="button" class="btn secondary" id="attachment-preview-close-bottom">Cerrar</button></div>
  </div>
 </div>
-<script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script><script src="./dydem.js?v=20261117-multiproyecto-v32"></script><script src="./dydem-critical.js?v=20261117-gantt-general-v2"></script></body></html>
+<script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script><script src="./dydem.js?v=20261117-membresias-v33"></script><script src="./dydem-critical.js?v=20261117-gantt-pdf-v3"></script><script src="./dydem-project-users.js?v=20261117-membresias-v1"></script></body></html>
