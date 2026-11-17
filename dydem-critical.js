@@ -270,7 +270,7 @@ $('critical-config-panel').addEventListener('submit',async e=>{
 function printCriticalGanttPdf(){
  if(!isAdmin())return;
  if(!criticalMode){alert('Abre la Ruta crítica general antes de exportarla.');return}
- const cpm=computeCriticalCPM(criticalActivities,criticalConfiguration),DAY=28,ROWS=19;
+ const cpm=computeCriticalCPM(criticalActivities,criticalConfiguration),DAY=28,ROWS=17;
  const search=$('critical-search').value.trim().toLowerCase(),onlyIncluded=$('critical-only-included').checked,onlyCritical=$('critical-only-critical').checked;
  const visible=cpm.all.filter(n=>(!onlyIncluded||n.included)&&(!onlyCritical||n.critical)&&
  (!search||(`${n.id} ${n.t.annex||''} ${n.t.title||''} ${projectLabel(n.project_id)}`).toLowerCase().includes(search)));
@@ -288,7 +288,7 @@ function printCriticalGanttPdf(){
  const summarize=n=>{
   const label=n.critical?'CRÍTICA':!n.included?'Bloqueada':n.duration===null?'Sin fechas':n.slack===null?'Por calcular':'Holgura '+cgDigits(n.slack);
   const refs=n.predecessors.map(id=>cpm.byId.get(id)?.t.annex||String(id));
-  return label+(refs.length?' · Dep.: '+refs.join(', '):'');
+  return label+' · Avance '+Math.max(0,Math.min(100,Number(n.t.progress)||0))+'%'+(refs.length?' · Dep.: '+refs.join(', '):'');
  };
  const weekNumber=n=>weekInfo(new Date(n*CG_DAY_MS)).week;
  for(let w=0;w<totalWeeks;w++){
@@ -359,7 +359,7 @@ function printCriticalGanttPdf(){
  .cp-date{text-align:center;padding:2.2mm 0;font-size:6.7pt;border-right:.5px solid #bac8d6}
  .cp-date-today{background:#70dbad!important}
  .cp-rows{width:100%}
- .cp-row{height:7.9mm;position:relative;break-inside:avoid;border-bottom:.4px solid #cbd7e3}
+ .cp-row{height:8mm;position:relative;break-inside:avoid;border-bottom:.4px solid #cbd7e3}
  .cp-label{overflow:hidden;background:#fafcff;display:flex;flex-direction:column;justify-content:center;padding:.5mm 1.2mm;border-right:1px solid #acbbcd}
  .cp-label b{font-size:7.3pt;line-height:1.12;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
  .cp-label .cp-name{font-size:7.1pt;line-height:1.15;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
