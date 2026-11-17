@@ -5,24 +5,34 @@ let PROJECT_ID=ORIGINAL_PROJECT_ID;
 const PROJECT_SELECTION_KEY='dydem-selected-project-v1';
 let projectRecords=[{id:ORIGINAL_PROJECT_ID,name:'Obra DYDEM',description:''}];
 let criticalMode=false,criticalActivities=[],criticalConfiguration=new Map(),criticalSelectedId=null;
-function currentProject(){return projectRecords.find(p=>p.id===PROJECT_ID)||{id:PROJECT_ID,name:'Proyecto sin nombre',description:''}}
+function currentProject(){return projectRecords.find(p=>p.id===PROJECT_ID)||{id:PROJECT_ID,name:'Sin proyectos',description:''}}
 function projectName(){return currentProject().name}
 function projectLabel(id){return projectRecords.find(p=>p.id===id)?.name||'Proyecto no disponible'}
 function renderProjectPicker(){
  const select=$('project-select');if(!select)return;
- select.innerHTML=projectRecords.map(p=>`<option value="${esc(p.id)}" ${p.id===PROJECT_ID?'selected':''}>${esc(p.name)}</option>`).join('');
- $('project-description').textContent=currentProject().description||'Cada proyecto tiene su propio cronograma, actividades y documentos.';
- $('project-new').hidden=!isAdmin();$('critical-show').hidden=!isAdmin();$('project-members-manage').hidden=!isAdmin();
+ const hasProjects=projectRecords.length>0,deleting=!!currentProject().deletion_started_at;
+ select.innerHTML=hasProjects?projectRecords.map(p=>`<option value="${esc(p.id)}" ${p.id===PROJECT_ID?'selected':''}>${esc(p.name)}${p.deletion_started_at?' · Eliminación pendiente':''}</option>`).join(''):'<option value="">Sin proyectos</option>';
+ select.disabled=!hasProjects;
+ $('project-description').textContent=!hasProjects?(isAdmin()?'Crea un nuevo proyecto para añadir actividades.':'Tu cuenta no tiene proyectos asignados. Solicita acceso al Administrador.'):
+  deleting?'Este proyecto está en proceso de eliminación.'+(isAdmin()?' Pulsa «Reintentar eliminación» para terminar.':''):
+  currentProject().description||'Cada proyecto tiene su propio cronograma, actividades y documentos.';
+ $('project-new').hidden=!isAdmin();$('critical-show').hidden=!isAdmin()||!hasProjects;
+ $('project-members-manage').hidden=!isAdmin()||!hasProjects||deleting;
+ $('project-delete').hidden=!isAdmin()||!hasProjects;
+ $('project-delete').textContent=deleting?'Reintentar eliminación':'Eliminar proyecto';
  $('project-switcher').hidden=!isSignedIn();
+ if(deleting||!hasProjects)$('project-users-panel').hidden=true;
+ if(isSignedIn())$('project-workspace').hidden=criticalMode||!hasProjects||deleting;
 }
 async function loadProjects(){
  if(!isSignedIn())return;
- const {data,error}=await cloud.from('projects').select('id,name,description,created_at').order('created_at',{ascending:true});
+ const {data,error}=await cloud.from('projects').select('id,name,description,created_at,deletion_started_at').order('created_at',{ascending:true});
  if(error)throw Error('No fue posible cargar los proyectos: '+messageError(error));
  if(!data?.length){
    projectRecords=[];tasks=[];commentsByActivity.clear();lastSynced.clear();revisions.clear();
-   $('project-workspace').hidden=true;$('project-switcher').hidden=true;
-   syncState('Tu cuenta no tiene proyectos asignados. Solicita acceso al Administrador.',true);
+   PROJECT_ID=null;storeSet(PROJECT_SELECTION_KEY,'');criticalMode=false;$('critical-path-panel').hidden=true;
+   renderProjectPicker();render();
+   syncState(isAdmin()?'No hay proyectos. Puedes crear uno nuevo.':'Tu cuenta no tiene proyectos asignados. Solicita acceso al Administrador.',!isAdmin());
    return;
  }
  $('project-workspace').hidden=criticalMode;
@@ -35,7 +45,7 @@ async function loadProjects(){
 }
 async function selectProject(id,discardAlreadyConfirmed=false){
  if(!isSignedIn()||!projectRecords.some(p=>p.id===id))return;
- if(PROJECT_ID===id&&!criticalMode)return;
+ if(PROJECT_ID===id&&!criticalMode&&tasks.length)return;
  if(saveBusy){alert('Hay un guardado en proceso. Intenta cambiar de proyecto después.');renderProjectPicker();return}
  if(isDirty()&&!discardAlreadyConfirmed&&!confirm('Hay cambios sin guardar. ¿Cambiar de proyecto y descartarlos?')){renderProjectPicker();return}
  PROJECT_ID=id;storeSet(PROJECT_SELECTION_KEY,id);criticalMode=false;activityListFilter='all';$('search').value='';
@@ -289,7 +299,7 @@ async function loadAccount(){const {data:sessionData,error:sessionError}=await c
   console.warn('No se pudo registrar la fecha de acceso:',messageError(registrationError));
  }
  enterAccount({...profile,display_name:loginName||user.user_metadata?.display_name||profile.email});await loadProjects();
- if(projectRecords.length){await reloadActivities(true);startRealtime()}else syncState('Tu cuenta no tiene proyectos asignados. Solicita acceso al Administrador.',true);
+ if(projectRecords.length){await reloadActivities(true);startRealtime()}
  if(isAdmin()&&!recoverMode)setTimeout(startup,150)}
 async function leaveAccount(signout=true){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}if(subscription&&cloud){await cloud.removeChannel(subscription);subscription=null}if(signout&&cloud)await cloud.auth.signOut();currentAccount=null;activityListFilter='all';$('search').value='';PROJECT_ID=ORIGINAL_PROJECT_ID;projectRecords=[{id:ORIGINAL_PROJECT_ID,name:'Obra DYDEM',description:''}];criticalMode=false;criticalActivities=[];criticalConfiguration.clear();criticalSelectedId=null;
  $('project-switcher').hidden=true;$('project-create-form').hidden=true;$('project-workspace').hidden=false;$('critical-path-panel').hidden=true;
@@ -316,23 +326,28 @@ async function reloadComments(projectId=PROJECT_ID){
  commentsByActivity=next;
 }
 async function reloadActivities(force=false){if(!isSignedIn()||!projectRecords.length)return;const projectId=PROJECT_ID;
- const {data:stillAllowed,error:accessError}=await cloud.from('projects').select('id').eq('id',projectId).maybeSingle();
+ const {data:stillAllowed,error:accessError}=await cloud.from('projects').select('id,deletion_started_at').eq('id',projectId).maybeSingle();
  if(accessError)throw accessError;
+ if(projectId!==PROJECT_ID)return;
  if(!stillAllowed){
   tasks=[];commentsByActivity.clear();lastSynced.clear();revisions.clear();
-  const {data:available,error:availableError}=await cloud.from('projects').select('id,name,description,created_at').order('created_at',{ascending:true});
+  const {data:available,error:availableError}=await cloud.from('projects').select('id,name,description,created_at,deletion_started_at').order('created_at',{ascending:true});
   if(availableError)throw availableError;
+  if(projectId!==PROJECT_ID)return;
   projectRecords=available||[];
   if(!projectRecords.length){
    if(subscription){cloud.removeChannel(subscription);subscription=null}
    if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null}
-   $('project-workspace').hidden=true;$('project-switcher').hidden=true;
-   syncState('Se retiró tu acceso al proyecto. No tienes otros proyectos asignados.',true);return;
+   await loadProjects();return;
   }
   PROJECT_ID=projectId;
   await selectProject(projectRecords[0].id,true);
   return;
  }
+ const record=projectRecords.find(p=>p.id===projectId);
+ if(record)record.deletion_started_at=stillAllowed.deletion_started_at;
+ renderProjectPicker();
+ if(stillAllowed.deletion_started_at){syncState('Eliminación del proyecto pendiente.',true);return}
  if((saveBusy||isDirty())&&!force){refreshQueued=true;return}
  syncState('Actualizando…',false,true);try{await reconcileAttachmentIntents()}catch(err){console.warn('Pendientes de Documentado:',messageError(err))}const {data,error}=await cloud.from('activities').select('id,data,revision').eq('project_id',projectId).is('deleted_at',null).order('id',{ascending:true});if(error){syncState('Error de conexión',true);throw error}if(projectId!==PROJECT_ID)return;await reloadComments(projectId);if(projectId!==PROJECT_ID)return;
  try{await loadResponsibleUsers()}catch(err){console.warn('Directorio de responsables no disponible:',messageError(err))}

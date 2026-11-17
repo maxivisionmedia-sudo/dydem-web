@@ -37,6 +37,14 @@ El pie del Gantt explica la duración inclusiva en días naturales, la holgura t
 
 El cálculo permanece basado en las fechas previstas y las dependencias incluidas: no utiliza el porcentaje ejecutado para descontar duración, no nivela recursos y no aplica una fecha límite contractual. El inicio previsto funciona como restricción de no comenzar antes de esa fecha. `tests/critical-cpm.test.cjs` verifica los ejemplos y estos límites contra el motor utilizado por la aplicación.
 
+## Eliminar un proyecto
+
+Solo el administrador ve **Eliminar proyecto**. El primer clic consulta un resumen; el segundo botón, **Sí, eliminar todo**, confirma el nombre y el alcance. Cancelar no modifica datos. La eliminación incluye actividades activas y previamente ocultadas, notas, dudas, historial, archivos de Revisión/Evidencia, cargas pendientes, membresías, contadores de anexos y configuración del Gantt. Las cuentas de usuario se conservan. Se retiran las dependencias de otras actividades hacia las eliminadas.
+
+La función `manage-projects` comprueba la identidad y el rol, bloquea nuevas escrituras y elimina los archivos mediante la API de Storage en lotes. Solo después de comprobar que no quedan objetos bajo el prefijo exacto del proyecto se purgan los registros en una transacción. Si se interrumpe, el proyecto muestra **Reintentar eliminación**. El último proyecto también puede eliminarse: **Nuevo proyecto** sigue accesible. Las instantáneas de versiones guardadas por separado no se reescriben.
+
+Desplegar primero la migración `project_hard_delete_with_confirmation` y la función `manage-projects`, y después el cliente web. Las nuevas funciones privilegiadas están en `dydem_private`; el paso de purga solo concede ejecución al rol del servidor. Las pruebas JavaScript cubren confirmación, permisos y errores de Storage; `tests/project-delete.sql` comprueba el borrado con datos sintéticos dentro de una transacción que siempre se revierte. No simula la eliminación de binarios reales.
+
 ## Punto de restauración previo a las mejoras de experiencia
 
 **v0.4** conserva el código anterior a estos filtros en la rama `versiones/v0.4`, commit `07381c949be3dcb1e62527b1f798654443a984e7`. La instantánea privada de datos y configuración está identificada como `0.4` en `dydem_archives.releases`. Incluye el sistema multiproyecto, membresías y Gantt con PDF. No duplica los binarios de los adjuntos ni las credenciales de Auth. Para restaurar, distinguir entre recuperar el código y reemplazar también los datos posteriores.
