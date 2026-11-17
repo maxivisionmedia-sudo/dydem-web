@@ -11,6 +11,30 @@ const cgDateDay=value=>{
 const cgISO=day=>new Date(day*CG_DAY_MS).toISOString().slice(0,10);
 const cgDateText=day=>{const d=new Date(day*CG_DAY_MS);return String(d.getUTCDate()).padStart(2,'0')+'/'+String(d.getUTCMonth()+1).padStart(2,'0')};
 const cgDigits=days=>Math.round(days)+' día'+(Math.round(days)===1?'':'s');
+function criticalLegendHTML(){
+ return `<h3 id="critical-legend-title">Cómo leer el Gantt</h3>
+ <dl class="critical-terms">
+  <div><dt>Duración · días naturales</dt><dd>Días programados entre el inicio y el final previstos, contando ambos. Del 10 al 14 son 5 días; incluye sábados, domingos y festivos. No indica días restantes.</dd></div>
+  <div><dt>Holgura total</dt><dd>Margen para desplazar una actividad sin retrasar el fin global calculado. Se obtiene restando el inicio temprano al inicio tardío. Puede desplazar actividades posteriores y se comparte con su cadena: no se suma entre actividades.</dd></div>
+  <div><dt><i class="critical-key key-critical" aria-hidden="true"></i>Crítica · holgura 0</dt><dd>Un retraso desplaza el fin global, si las demás fechas y duraciones se mantienen. Puede haber varias rutas críticas. La importancia del trabajo y su porcentaje de avance no determinan esta etiqueta.</dd></div>
+  <div><dt><i class="critical-key key-included" aria-hidden="true"></i>No crítica · holgura mayor que 0</dt><dd>Tiene margen en el cálculo actual. La barra azul indica inclusión; confirma su holgura y revisa si el resultado es provisional.</dd></div>
+  <div><dt><i class="critical-key key-blocked" aria-hidden="true"></i>Bloqueada</dt><dd>Está excluida del cálculo CPM. No significa que la obra esté detenida. Una actividad sin fechas o sin cálculo tampoco se clasifica como no crítica.</dd></div>
+  <div><dt>Fin calculado · Fin CPM</dt><dd>Fecha más tardía de terminación calculada entre las actividades incluidas de todos los proyectos. La holgura se refiere a ese final común, no al plazo particular de cada proyecto.</dd></div>
+  <div><dt>Predecesoras · Dep.</dt><dd>Trabajos que deben terminar antes de comenzar esta actividad. La relación actual es fin a inicio: la siguiente puede empezar al día siguiente, sin desfases adicionales.</dd></div>
+  <div><dt>Cálculo provisional</dt><dd>No hay dependencias, faltan fechas, existen vínculos a actividades excluidas o sin fechas, o hay un ciclo. Los resultados dependen de las fechas y relaciones registradas.</dd></div>
+ </dl>
+ <p class="critical-legend-note"><b>Referencias visuales:</b> línea verde = hoy; barra tenue discontinua = fechas previstas originales cuando difieren del cálculo. Anexo identifica la actividad; Sem. identifica la semana. En el PDF, Avance es el porcentaje de obra registrado.</p>
+ <details class="critical-calculation-help"><summary>Cómo se calcula la ruta crítica (CPM)</summary>
+  <ol>
+   <li><b>Duración:</b> final previsto − inicio previsto + 1 día.</li>
+   <li><b>Inicio temprano:</b> la fecha más tardía entre el inicio previsto y el día siguiente al final temprano de todas las predecesoras incluidas y con fechas válidas. El final temprano suma la duración, contando el primer día.</li>
+   <li><b>Fechas tardías:</b> desde el fin global se recorre la red hacia atrás. Cada actividad debe terminar antes del inicio tardío de sus sucesoras; si no tiene sucesoras calculables, puede terminar en el fin global.</li>
+   <li><b>Holgura:</b> inicio tardío − inicio temprano, equivalente a final tardío − final temprano. Holgura 0 = crítica; holgura positiva = no crítica.</li>
+  </ol>
+  <p><b>Ejemplo:</b> dos trabajos paralelos duran 5 y 3 días. Una prueba de 2 días espera a ambos. El conjunto termina el día 7: el trabajo de 5 días y la prueba tienen holgura 0; el trabajo de 3 días tiene holgura de 2 días.</p>
+  <p>Este cálculo usa días naturales, fechas previstas y dependencias. No descuenta trabajo ejecutado ni considera disponibilidad de cuadrillas, materiales o equipos. Tampoco calcula holgura negativa frente a una fecha límite contractual. Las fechas previstas de las actividades se conservan.</p>
+ </details>`;
+}
 function computeCriticalCPM(rows,configuration){
  const all=rows.map(r=>{
   const t=r.data||r,conf=configuration.get(Number(r.id))||{};
@@ -136,11 +160,11 @@ function renderCriticalGantt(){
    const effective=n.included?trackRect(n.earlyStart,n.earlyEnd):planned;
    const bar=effective?`<button type="button" class="critical-bar ${color}" data-critical-pick="${n.id}" style="left:${effective.left}px;width:${effective.width}px" title="${esc(n.t.annex)}: ${esc(n.t.title)} · ${esc(n.earlyStart!==null?'CPM '+cgISO(n.earlyStart)+' – '+cgISO(n.earlyEnd):'Excluida / sin fechas')}">${esc(n.t.annex)}${effective.width>110?' · '+esc(n.t.title):''}</button>`:'';
    const ghost=planned&&n.included&&n.earlyStart!==null&&n.earlyStart!==n.start?`<span class="critical-planned" title="Fechas tentativas originales" style="left:${planned.left}px;width:${planned.width}px"></span>`:'';
-   const line=n.critical?'Crítica · Holgura 0':!n.included?'Bloqueada':n.duration===null?'Sin fechas':n.slack===null?'Sin calcular':'Holgura '+cgDigits(n.slack);
+   const line=n.critical?'Crítica · Holgura: 0 días':!n.included?'Bloqueada':n.duration===null?'Sin fechas':n.slack===null?'Sin calcular':'Holgura: '+cgDigits(n.slack);
    rows.push(`<div class="critical-activity-row ${!n.included?'is-blocked':''} ${selected}" data-critical-row="${n.id}">
     <div class="critical-row-info"><input type="checkbox" data-critical-include="${n.id}" aria-label="Incluir actividad ${esc(n.t.annex)}" ${n.included?'checked':''}>
       <button type="button" class="critical-row-label" data-critical-pick="${n.id}" title="${esc(n.t.title)}">
-       <b>${esc(n.t.annex)} · ${esc(n.t.title)}</b><small>${esc(line)}${n.duration!==null?' · '+cgDigits(n.duration):''}</small>
+       <b>${esc(n.t.annex)} · ${esc(n.t.title)}</b><small><span>${esc(line)}</span>${n.duration!==null?'<span>Duración: '+cgDigits(n.duration)+'</span>':''}</small>
       </button>${n.critical?'<span class="critical-flag">CRÍTICA</span>':''}</div>
     <div class="critical-rail" data-critical-pick="${n.id}">${ghost}${bar}${markToday()}</div></div>`);
   }
@@ -160,8 +184,8 @@ function renderCriticalInspector(result=computeCriticalCPM(criticalActivities,cr
  const chosen=new Set(node.predecessors);
  const options=peers.map(n=>`<option value="${n.id}" ${chosen.has(n.id)?'selected':''}>${esc(projectLabel(n.project_id))} · ${esc(n.t.annex)} · ${esc(String(n.t.title||'').slice(0,95))}${!n.included?' (bloqueada)':''}</option>`).join('');
  box.innerHTML=`<h3>Configurar · ${esc(node.t.annex)} · ${esc(node.t.title)}</h3>
- <p class="muted">Proyecto: ${esc(projectLabel(node.project_id))} · Inicio: ${esc(node.t.start||'Sin fecha')} · Final: ${esc(node.t.end||'Sin fecha')}
- · ${node.duration!==null?cgDigits(node.duration):'Duración no disponible'}</p>
+ <p class="muted">Proyecto: ${esc(projectLabel(node.project_id))} · Inicio previsto: ${esc(node.t.start||'Sin fecha')} · Final previsto: ${esc(node.t.end||'Sin fecha')}
+ · Duración: ${node.duration!==null?cgDigits(node.duration)+(node.duration===1?' natural':' naturales'):'no disponible'}</p>
  <form id="critical-edit-form">
  <label><input id="critical-edit-included" type="checkbox" ${node.included?'checked':''}> Incluir esta actividad en el Gantt global</label>
  <label for="critical-predecessors">Actividades predecesoras (deben terminar antes de empezar esta)</label>
@@ -270,7 +294,8 @@ $('critical-config-panel').addEventListener('submit',async e=>{
 function printCriticalGanttPdf(){
  if(!isAdmin())return;
  if(!criticalMode){alert('Abre la Ruta crítica general antes de exportarla.');return}
- const cpm=computeCriticalCPM(criticalActivities,criticalConfiguration),DAY=28,ROWS=17;
+ // Reserve room for the explanatory footer without shrinking activity text.
+ const cpm=computeCriticalCPM(criticalActivities,criticalConfiguration),DAY=28,ROWS=16;
  const search=$('critical-search').value.trim().toLowerCase(),onlyIncluded=$('critical-only-included').checked,onlyCritical=$('critical-only-critical').checked;
  const visible=cpm.all.filter(n=>(!onlyIncluded||n.included)&&(!onlyCritical||n.critical)&&
  (!search||(`${n.id} ${n.t.annex||''} ${n.t.title||''} ${projectLabel(n.project_id)}`).toLowerCase().includes(search)));
@@ -330,11 +355,13 @@ function printCriticalGanttPdf(){
      <div class="cp-chart"><div class="cp-header"><div class="cp-caption">PROYECTO · ANEXO · ACTIVIDAD · DEPENDENCIAS</div>
        <div class="cp-calendar"><div class="cp-weeks">${weeks}</div><div class="cp-dates">${dates}</div></div></div>
        <div class="cp-rows">${rows}</div></div>
-     <footer class="cp-footer"><div class="cp-legend"><span><i class="cp-key-crit"></i> Crítica (holgura 0)</span>
+     <footer class="cp-footer"><div class="cp-footer-top"><div class="cp-legend"><span><i class="cp-key-crit"></i> Crítica (holgura 0)</span>
        <span><i class="cp-key-normal"></i> Incluida</span>
        <span><i class="cp-key-block"></i> Bloqueada</span>
        <span><i class="cp-key-unknown"></i> Sin fechas</span></div>
-       <span>${nodes.length} actividades de ${inPeriod.length} en este periodo · Página __PAGE__ de __TOTAL__</span></footer>
+       <span>${nodes.length} actividades de ${inPeriod.length} en este periodo · Página __PAGE__ de __TOTAL__</span></div>
+       <p class="cp-reading-key"><b>Duración:</b> final previsto − inicio previsto + 1. <b>Holgura:</b> margen sin retrasar el fin global calculado. <b>Crítica:</b> holgura 0; <b>no crítica:</b> holgura mayor que 0.</p>
+       <p class="cp-reading-key">Días naturales, incluidos fines de semana. CPM usa fechas y dependencias, no avance real ni recursos. Bloqueada = excluida del cálculo. Dep. = predecesoras. Avance = porcentaje de obra.</p></footer>
     </section>`);
   }
  }
@@ -378,8 +405,10 @@ function printCriticalGanttPdf(){
  .cp-critical .cp-fill{background:rgba(170,32,48,.4)}
  .cp-nodate{font-size:7pt;color:#737f8e;position:absolute;top:2.2mm;left:2mm}
  .cp-empty{padding:8mm;text-align:center;color:#65778d;font-size:9pt}
- .cp-footer{position:absolute;bottom:2mm;left:0;right:0;display:flex;justify-content:space-between;gap:4mm;align-items:center;font-size:7pt;color:#52667e}
- .cp-footer>span{white-space:nowrap}.cp-legend{display:flex;gap:3mm;flex-wrap:wrap}
+ .cp-footer{position:absolute;bottom:2mm;left:0;right:0;height:14mm;font-size:7pt;color:#52667e}
+ .cp-footer-top{display:flex;justify-content:space-between;gap:4mm;align-items:center;line-height:1.25}
+ .cp-footer-top>span{white-space:nowrap}.cp-legend{display:flex;gap:3mm;flex-wrap:wrap}
+ .cp-reading-key{margin:1.3mm 0 0;font-size:7.2pt;line-height:1.25}
  .cp-legend span{white-space:nowrap}.cp-legend i{display:inline-block;vertical-align:middle;width:3mm;height:1.5mm;border:1px solid #7793b3;margin-right:.8mm}
  .cp-key-crit{background:#f5a7a7;border-color:#bb2c3b!important}.cp-key-normal{background:#9fccf5}
  .cp-key-block{background:#d4d9df;border-style:dashed!important}.cp-key-unknown{background:#f3e5c5}
@@ -388,3 +417,4 @@ function printCriticalGanttPdf(){
 }
 
 $('critical-print').onclick=printCriticalGanttPdf;
+$('critical-legend').innerHTML=criticalLegendHTML();

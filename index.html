@@ -916,7 +916,7 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
 .critical-project-row{background:#d8e6f8;font-weight:800;color:#243f60;min-height:31px}
 .critical-project-name{padding:7px 11px;position:sticky;left:0;z-index:3;background:#d8e6f8;border-right:1px solid #adbfda}
 .critical-project-rail{background:repeating-linear-gradient(90deg,#d8e6f8 0,#d8e6f8 calc(var(--cg-day-width)*7),#f1f6fd calc(var(--cg-day-width)*7),#f1f6fd calc(var(--cg-day-width)*14))}
-.critical-activity-row{height:42px;border-bottom:1px solid #e0e6f0}
+.critical-activity-row{min-height:42px;border-bottom:1px solid #e0e6f0}
 .critical-activity-row.is-blocked{opacity:.57}
 .critical-activity-row.selected .critical-row-info{background:#fff3d8;box-shadow:inset 3px 0 #efae29}
 .critical-row-info{display:flex;align-items:center;gap:7px;min-width:0;position:sticky;left:0;z-index:3;
@@ -925,7 +925,8 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
 .critical-row-label{border:0;background:transparent;text-align:left;display:flex;flex-direction:column;min-width:0;
  cursor:pointer;gap:2px;flex:1;color:inherit;padding:0;font-size:12px}
 .critical-row-label b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.critical-row-label small{color:#68798f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.critical-row-label small{color:#68798f;display:flex;flex-wrap:wrap;gap:2px 8px;line-height:1.25}
+.critical-row-label small span{white-space:nowrap}
 .critical-flag{font-size:10px;font-weight:800;border-radius:6px;background:#ffede9;color:#a33b2c;padding:3px;white-space:nowrap}
 .critical-rail{position:relative;overflow:hidden;background-image:repeating-linear-gradient(to right,transparent 0,transparent calc(var(--cg-day-width) - 1px),#bdc9d8 calc(var(--cg-day-width) - 1px),#bdc9d8 var(--cg-day-width));}
 .critical-rail.week-shade{background-color:#f4f9ff}
@@ -993,6 +994,23 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
 [data-focus-stage]:focus-visible{outline:2px solid #2558d6;outline-offset:4px;border-radius:5px}
 @media(max-width:560px){.activity-list-tools{padding:12px}.activity-search{width:100%}.activity-filter{padding:9px 10px}.activity-open-stage{min-height:40px}}
 @media print{.activity-list-tools,.activity-open-stage{display:none!important}}
+
+/* Nomenclatura y alcance del cálculo CPM. */
+.critical-legend-panel{margin-top:18px;border-top:1px solid #cbd8e7;padding-top:14px;color:#384f6c}
+.critical-legend-panel h3{margin:0 0 12px;font-size:16px;color:#243c5b}
+.critical-terms{margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 22px;font-size:12px;line-height:1.55}
+.critical-terms dt{font-weight:750;color:#243c5b;margin-bottom:3px;display:flex;align-items:center;gap:6px}
+.critical-terms dd{margin:0}
+.critical-key{display:inline-block;width:17px;height:9px;border:1px solid #4884bf;border-radius:2px;flex:none}
+.critical-key.key-critical{background:#ffd2c8;border-color:#cb4935}.critical-key.key-included{background:#7fb3e8}
+.critical-key.key-blocked{background:#d7dce5;border-color:#909cad;border-style:dashed}
+.critical-legend-note{font-size:12px;line-height:1.55;margin:14px 0}
+.critical-calculation-help{font-size:12px;line-height:1.6;border:1px solid #cfdae8;border-radius:8px;background:#f8fbff;padding:10px 13px}
+.critical-calculation-help summary{cursor:pointer;font-weight:700;color:#244e8b}
+.critical-calculation-help summary:focus-visible{outline:2px solid #2558d6;outline-offset:3px}
+.critical-calculation-help ol{padding-left:19px}.critical-calculation-help li{margin-bottom:6px}
+.critical-calculation-help p:last-child{margin-bottom:0}
+@media(max-width:720px){.critical-terms{grid-template-columns:1fr}}
 </style></head><body><div id="access-gate"><div class="access-box"><h2 id="access-title">Acceso a DYDEM en línea</h2><p id="access-help">Inicia sesión con el correo electrónico de tu cuenta.</p><form id="access-form"><label>Correo electrónico<input id="access-user" type="email" required autocomplete="username" placeholder="usuario@empresa.com"></label><label>Contraseña<input id="access-pass" type="password" required autocomplete="current-password"></label><p id="access-error" role="alert"></p><button class="btn" type="submit" id="access-submit">Iniciar sesión</button></form><form id="invite-activation" hidden>
  <h3>Registro de usuario DYDEM</h3>
  <p id="invite-registration-description" class="invite-activation-description">Regístrate únicamente con el enlace de invitación autorizado por el Administrador. Se puede utilizar una sola vez.</p>
@@ -1088,7 +1106,7 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
  <div id="critical-gantt" class="critical-gantt-scroll"><p>Cargando actividades de todos los proyectos…</p></div>
  <div class="critical-config-panel" id="critical-config-panel"><h3>Dependencias y selección</h3>
   <p class="muted">Selecciona una actividad del Gantt para configurar qué actividades deben terminar antes de que comience. Las dependencias pueden enlazar proyectos distintos.</p></div>
- <p class="critical-note muted">Método CPM: relaciones fin a inicio, sin desfases y con días naturales. Las fechas calculadas pueden desplazarse por dependencias. Si faltan fechas o dependencias, el resultado se marca provisional. Las actividades bloqueadas no intervienen en el cálculo.</p>
+ <aside id="critical-legend" class="critical-legend-panel" aria-labelledby="critical-legend-title"></aside>
 </section></main><div class="modal" id="modal" hidden><div class="modal-box"><h2 id="modal-title"></h2><p id="modal-help"></p><form id="modal-form"><div id="modal-fields" class="stack"></div><p id="modal-error" class="error"></p><div class="modal-actions"><button type="button" class="btn secondary" id="modal-cancel">Cerrar</button><button type="submit" class="btn">Guardar</button></div></form></div></div>
 <div class="modal" id="attachment-preview" role="dialog" aria-modal="true" aria-label="Vista previa de archivo" hidden>
  <div class="modal-box">
@@ -1098,4 +1116,4 @@ body.custom-mode .task .step:has(input[data-step]:disabled){background:#f0f3f7}
   <div class="attachment-preview-actions"><button type="button" class="btn" id="attachment-preview-download" data-download="" data-id="">Descargar archivo</button><button type="button" class="btn secondary" id="attachment-preview-close-bottom">Cerrar</button></div>
  </div>
 </div>
-<script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script><script src="./dydem-activity-focus.js?v=20261117-actividad-v1"></script><script src="./dydem.js?v=20261117-actividad-v35"></script><script src="./dydem-critical.js?v=20261117-gantt-pdf-v4"></script><script src="./dydem-project-users.js?v=20261117-membresias-v2"></script></body></html>
+<script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script><script src="./dydem-activity-focus.js?v=20261117-actividad-v1"></script><script src="./dydem.js?v=20261117-actividad-v35"></script><script src="./dydem-critical.js?v=20261117-gantt-leyenda-v5"></script><script src="./dydem-project-users.js?v=20261117-membresias-v2"></script></body></html>
