@@ -27,11 +27,11 @@ async function loadProjects(){
  storeSet(PROJECT_SELECTION_KEY,PROJECT_ID);
  renderProjectPicker();
 }
-async function selectProject(id){
+async function selectProject(id,discardAlreadyConfirmed=false){
  if(!isSignedIn()||!projectRecords.some(p=>p.id===id))return;
  if(PROJECT_ID===id&&!criticalMode)return;
  if(saveBusy){alert('Hay un guardado en proceso. Intenta cambiar de proyecto después.');renderProjectPicker();return}
- if(isDirty()&&!confirm('Hay cambios sin guardar. ¿Cambiar de proyecto y descartarlos?')){renderProjectPicker();return}
+ if(isDirty()&&!discardAlreadyConfirmed&&!confirm('Hay cambios sin guardar. ¿Cambiar de proyecto y descartarlos?')){renderProjectPicker();return}
  PROJECT_ID=id;storeSet(PROJECT_SELECTION_KEY,id);criticalMode=false;
  $('critical-path-panel').hidden=true;$('project-workspace').hidden=false;
  $('project-create-form').hidden=true;
