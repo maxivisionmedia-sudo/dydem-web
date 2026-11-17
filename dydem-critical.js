@@ -277,7 +277,8 @@ function printCriticalGanttPdf(){
  const offset=(new Date(cpm.start*CG_DAY_MS).getUTCDay()+6)%7;
  const zero=cpm.start-offset,last=cpm.last+6-(new Date(cpm.last*CG_DAY_MS).getUTCDay()+6)%7;
  const totalWeeks=Math.max(1,Math.ceil((last-zero+1)/DAY)),pages=[];
- const today=cgDateDay(new Date().toISOString().slice(0,10));
+ const localToday=new Date();
+ const today=Math.round(Date.UTC(localToday.getFullYear(),localToday.getMonth(),localToday.getDate())/CG_DAY_MS);
  const percent=x=>(x*100/DAY).toFixed(5);
  const range=(a,b,first)=>{
   if(a===null||b===null||a>b)return null;
@@ -290,7 +291,7 @@ function printCriticalGanttPdf(){
   const refs=n.predecessors.map(id=>cpm.byId.get(id)?.t.annex||String(id));
   return label+' · Avance '+Math.max(0,Math.min(100,Number(n.t.progress)||0))+'%'+(refs.length?' · Dep.: '+refs.join(', '):'');
  };
- const weekNumber=n=>weekInfo(new Date(n*CG_DAY_MS)).week;
+ const weekNumber=n=>{const dt=new Date(n*CG_DAY_MS);return weekInfo(new Date(dt.getUTCFullYear(),dt.getUTCMonth(),dt.getUTCDate())).week};
  for(let w=0;w<totalWeeks;w++){
   const start=zero+w*DAY,end=start+DAY-1;
   const inPeriod=visible.filter(n=>{
