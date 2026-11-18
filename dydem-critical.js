@@ -136,6 +136,13 @@ function drawCriticalLinks(chart,node){
  chart.querySelector('.critical-links').innerHTML=paths.join('');
 }
 let criticalLinkObserver;
+const cgByCategory=()=>$('critical-group')?.value==='category';
+const cgCategory=n=>workCategories.includes(n.t.workCategory)?n.t.workCategory:'Sin rubro asignado';
+function cgCompareGroups(a,b){
+ if(!cgByCategory())return projectLabel(a.project_id).localeCompare(projectLabel(b.project_id),'es');
+ const labels=[...workCategories,'Sin rubro asignado'];
+ return labels.indexOf(cgCategory(a))-labels.indexOf(cgCategory(b));
+}
 function renderCriticalGantt(){
  if(!criticalMode||!isAdmin())return;
  const result=computeCriticalCPM(criticalActivities,criticalConfiguration);
@@ -143,12 +150,14 @@ function renderCriticalGantt(){
  const container=$('critical-gantt'),oldLeft=container.scrollLeft,oldTop=container.scrollTop;
  const query=$('critical-search').value.trim().toLowerCase();
  const showIncluded=$('critical-only-included').checked,onlyCritical=$('critical-only-critical').checked;
- const byProject=new Map(projectRecords.map(p=>[p.id,[]]));
+ const byCategory=cgByCategory();
+ const groups=new Map((byCategory?[...workCategories,'Sin rubro asignado']:projectRecords.map(p=>p.id)).map(key=>[key,[]]));
  for(const n of result.all){
   if(showIncluded&&!n.included||onlyCritical&&!n.critical)continue;
   if(query&&!(''+n.id+' '+n.t.annex+' '+n.t.title+' '+projectLabel(n.project_id)).toLowerCase().includes(query))continue;
-  if(!byProject.has(n.project_id))byProject.set(n.project_id,[]);
-  byProject.get(n.project_id).push(n);
+  const key=byCategory?cgCategory(n):n.project_id;
+  if(!groups.has(key))groups.set(key,[]);
+  groups.get(key).push(n);
  }
  const left=result.start-(new Date(result.start*CG_DAY_MS).getUTCDay()+6)%7;
  const right=result.last+6-(new Date(result.last*CG_DAY_MS).getUTCDay()+6)%7;
@@ -170,9 +179,9 @@ function renderCriticalGantt(){
  const previous=new Set(focus?.predecessors||[]);
  const startOf=n=>n.earlyStart??n.start??Infinity;
  const rows=[];
- for(const [pid,items] of byProject){
+ for(const [pid,items] of groups){
   if(!items.length)continue;
-  rows.push(`<div class="critical-project-row"><div class="critical-project-name">${esc(projectLabel(pid))} · ${items.length} actividad${items.length===1?'':'es'}</div><div class="critical-project-rail"></div></div>`);
+  rows.push(`<div class="critical-project-row"><div class="critical-project-name">${esc(byCategory?pid:projectLabel(pid))} · ${items.length} actividad${items.length===1?'':'es'}</div><div class="critical-project-rail"></div></div>`);
   items.sort((a,b)=>startOf(a)-startOf(b)||a.id-b.id);
   for(const n of items){
    const role=n===focus?'Seleccionada':previous.has(n.id)?'Predecesora':focus&&n.predecessors.includes(focus.id)?'Sucesora':'';
@@ -187,7 +196,7 @@ function renderCriticalGantt(){
    rows.push(`<div class="critical-activity-row ${!n.included?'is-blocked':''} ${selected}" data-critical-row="${n.id}">
     <div class="critical-row-info"><input type="checkbox" data-critical-include="${n.id}" aria-label="Incluir actividad ${esc(n.t.annex)}" ${n.included?'checked':''}>
       <button type="button" class="critical-row-label" data-critical-pick="${n.id}" title="${esc(n.t.title)}">
-       <b>${esc(n.t.annex)} · ${esc(n.t.title)}</b><small>${role?`<strong style="color:${accent}">${role}</strong> · `:""}<span>${esc(line)}</span>${n.duration!==null?'<span>Duración: '+cgDigits(n.duration)+'</span>':''}</small>
+       <b>${byCategory?esc(projectLabel(n.project_id))+' · ':''}${esc(n.t.annex)} · ${esc(n.t.title)}</b><small>${role?`<strong style="color:${accent}">${role}</strong> · `:""}<span>${esc(line)}</span>${n.duration!==null?'<span>Duración: '+cgDigits(n.duration)+'</span>':''}</small>
       </button>${n.critical?'<span class="critical-flag">CRÍTICA</span>':''}</div>
     <div class="critical-rail" data-critical-pick="${n.id}">${ghost}${bar}${markToday()}</div></div>`);
   }
@@ -279,8 +288,8 @@ $('project-create-form').onsubmit=async e=>{
 $('critical-show').onclick=()=>showCriticalPath();
 $('critical-close').onclick=closeCriticalPath;
 $('critical-refresh').onclick=async()=>{if(!isAdmin())return;try{await loadProjects();await loadCriticalPath()}catch(e){alert('No se pudo actualizar: '+messageError(e))}};
-for(const name of ['critical-search','critical-only-included','critical-only-critical']){
- $(name).addEventListener(name==='critical-search'?'input':'change',()=>{if(criticalMode)renderCriticalGantt()});
+for(const name of ['critical-group','critical-search','critical-only-included','critical-only-critical']){
+ $(name)?.addEventListener(name==='critical-search'?'input':'change',()=>{if(criticalMode)renderCriticalGantt()});
 }
 $('critical-gantt').addEventListener('click',e=>{
  const picked=e.target.closest('[data-critical-pick]');
@@ -353,7 +362,7 @@ function printCriticalGanttPdf(){
    const a=n.included&&n.earlyStart!==null?n.earlyStart:n.start;
    const b=n.included&&n.earlyEnd!==null?n.earlyEnd:n.end;
    return (a===null||b===null)?w===0:!!range(a,b,start);
-  }).sort((a,b)=>projectLabel(a.project_id).localeCompare(projectLabel(b.project_id),'es')
+  }).sort((a,b)=>cgCompareGroups(a,b)
    ||(a.earlyStart??a.start??Infinity)-(b.earlyStart??b.start??Infinity)||a.id-b.id);
   const groups=Math.max(1,Math.ceil(inPeriod.length/ROWS));
   for(let group=0;group<groups;group++){
@@ -371,7 +380,7 @@ function printCriticalGanttPdf(){
     const rectHTML=rect?`<div class="cp-bar ${cls} ${rect.continuedLeft?'cp-carry-in':''} ${rect.continuedRight?'cp-carry-out':''}" style="left:${rect.left}%;width:${rect.width}%"><span class="cp-fill" style="width:${progress}%"></span></div>`:'';
     const note=!rect?'<span class="cp-nodate">Sin fechas válidas</span>':'';
     return `<div class="cp-row">
-     <div class="cp-label"><b>${esc(projectLabel(n.project_id))} · ${esc(n.t.annex||n.id)}</b>
+     <div class="cp-label"><b>${cgByCategory()?esc(cgCategory(n))+' · ':''}${esc(projectLabel(n.project_id))} · ${esc(n.t.annex||n.id)}</b>
        <span class="cp-name">${esc(n.t.title||'Actividad')}</span><small>${esc(summarize(n))}</small></div>
      <div class="cp-track"><div class="cp-grid">${bg}</div>${rectHTML}${note}</div></div>`;
    }).join('')||'<div class="cp-empty">No hay actividades en este periodo con los filtros actuales.</div>';
@@ -382,7 +391,7 @@ function printCriticalGanttPdf(){
        <p>Gantt de todos los proyectos · ${dateLabel(start)} al ${dateLabel(end)} · 4 semanas por hoja</p></div>
        <aside>${esc(warning)}<br>Bloque ${w+1} de ${totalWeeks}${partial}</aside></header>
      <div class="cp-metrics">${cpm.selected.length} actividades incluidas · ${cpm.all.length-cpm.selected.length} bloqueadas · ${cpm.criticalCount} críticas · ${cpm.links} dependencias válidas · Fin CPM: ${cpm.finish===null?'Sin calcular':dateLabel(cpm.finish)}</div>
-     <div class="cp-chart"><div class="cp-header"><div class="cp-caption">PROYECTO · ANEXO · ACTIVIDAD · DEPENDENCIAS</div>
+     <div class="cp-chart"><div class="cp-header"><div class="cp-caption">${cgByCategory()?'RUBRO · ':''}PROYECTO · ANEXO · ACTIVIDAD · DEPENDENCIAS</div>
        <div class="cp-calendar"><div class="cp-weeks">${weeks}</div><div class="cp-dates">${dates}</div></div></div>
        <div class="cp-rows">${rows}</div></div>
      <footer class="cp-footer"><div class="cp-footer-top"><div class="cp-legend"><span><i class="cp-key-crit"></i> Crítica (holgura 0)</span>
@@ -451,7 +460,7 @@ function printCriticalOverview(pageLimit){
  const result=computeCriticalCPM(criticalActivities,criticalConfiguration);
  const startOf=n=>n.earlyStart??n.start;
  const endOf=n=>n.earlyEnd??n.end;
- const items=result.all.slice().sort((a,b)=>projectLabel(a.project_id).localeCompare(projectLabel(b.project_id),'es')||
+ const items=result.all.slice().sort((a,b)=>cgCompareGroups(a,b)||
   (startOf(a)??Infinity)-(startOf(b)??Infinity)||a.id-b.id);
  if(!items.length){alert('No hay actividades para exportar.');return}
  const pages=Math.min(pageLimit,items.length);
@@ -468,6 +477,7 @@ function printCriticalOverview(pageLimit){
  const stride=Math.max(7,Math.ceil(days/12/7)*7);
  const monday=first+(8-new Date(first*CG_DAY_MS).getUTCDay())%7;
  for(let day=monday;day<=last;day+=stride)ticks.push(day);
+ const byCategory=cgByCategory(),titleX=byCategory?274:116;
  const rowsPerPage=Math.ceil(items.length/pages);
  const rowHeight=Math.min(29,810/rowsPerPage),font=Math.min(14,rowHeight*.72);
  const sheets=Array.from({length:pages},(_,i)=>{
@@ -481,14 +491,15 @@ function printCriticalOverview(pageLimit){
    const a=startOf(n),b=endOf(n),valid=a!==null&&b!==null&&b>=a;
    const color=!n.included?'#718096':n.critical?'#ab2639':'#357cb4';
    const bar=valid?`<rect x="${chartX(a)}" y="${y+rowHeight*.25}" width="${width*(b-a+1)/days}" height="${rowHeight*.50}" fill="${color}"/>`:label(left+5,baseline,'Sin fechas válidas',font,width);
-   return `<g data-activity="${n.id}"><line x1="0" x2="1400" y1="${y+rowHeight}" y2="${y+rowHeight}" stroke="#dce3e9"/>`+
+   const boundary=byCategory&&(j===0||cgCategory(rows[j-1])!==cgCategory(n));
+   return `<g data-activity="${n.id}">${boundary?`<line x1="0" x2="1400" y1="${y}" y2="${y}" stroke="#587593" stroke-width="1.5"/>`:'' }<line x1="0" x2="1400" y1="${y+rowHeight}" y2="${y+rowHeight}" stroke="#dce3e9"/>`+
     label(1,baseline,n.id,font,32)+label(36,baseline,projectLabel(n.project_id),font,76)+
-    label(116,baseline,n.t.title||'Actividad',font,475)+label(598,baseline,n.predecessors.join(', ')||'—',font,144)+bar+'</g>';
+    (byCategory?label(116,baseline,cgCategory(n),font,153):'')+label(titleX,baseline,n.t.title||'Actividad',font,591-titleX)+label(598,baseline,n.predecessors.join(', ')||'—',font,144)+bar+'</g>';
   }).join('');
   return `<section><header><h1>DYDEM · Ruta crítica general</h1><b>Hoja ${i+1} de ${pages}</b></header>
    <p>${cgISO(first)} – ${cgISO(last)} · Actividades ${begin+1} a ${end} de ${items.length} · ${result.cyclic?'Dependencias circulares':result.provisional?'Cálculo provisional':'Fechas calculadas por CPM'}</p>
    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 855" preserveAspectRatio="xMinYMin meet">
-   ${label(1,17,'ID',13,32,true)}${label(36,17,'Proyecto',13,76,true)}${label(116,17,'Actividad',13,475,true)}${label(598,17,'Predecesoras (ID)',13,145,true)}${grid}${body}</svg>
+   ${label(1,17,'ID',13,32,true)}${label(36,17,'Proyecto',13,76,true)}${byCategory?label(116,17,'Rubro',13,153,true):''}${label(titleX,17,'Actividad',13,591-titleX,true)}${label(598,17,'Predecesoras (ID)',13,145,true)}${grid}${body}</svg>
    <footer><b style="color:#ab2639">■ Crítica</b>　<b style="color:#357cb4">■ Incluida</b>　<b style="color:#718096">■ Bloqueada</b>　·　Las predecesoras se identifican por su ID en cualquier hoja.</footer></section>`;
  }).join('');
  printWindow('DYDEM · Gantt completo',sheets,`@page{size:A4 landscape;margin:7mm}
