@@ -143,6 +143,17 @@ function cgCompareGroups(a,b){
  const labels=[...workCategories,'Sin rubro asignado'];
  return labels.indexOf(cgCategory(a))-labels.indexOf(cgCategory(b));
 }
+function cgWeekBands(first,last){
+ const bands=[];
+ for(let start=first;start<=last;){
+  const utc=new Date(start*CG_DAY_MS);
+  const week=weekInfo(new Date(utc.getUTCFullYear(),utc.getUTCMonth(),utc.getUTCDate()));
+  const end=Math.min(last,cgDateDay(week.end));
+  bands.push({start,end,week:week.week,year:week.year});
+  start=end+1;
+ }
+ return bands;
+}
 function renderCriticalGantt(){
  if(!criticalMode||!isAdmin())return;
  const result=computeCriticalCPM(criticalActivities,criticalConfiguration);
@@ -163,6 +174,8 @@ function renderCriticalGantt(){
  const right=result.last+6-(new Date(result.last*CG_DAY_MS).getUTCDay()+6)%7;
  const span=Math.max(28,right-left+1),dayWidth=27;
  const weekdays=['Lu','Ma','Mi','Ju','Vi','Sa','Do'];
+ const weekHeader=cgWeekBands(left,right).map(w=>
+  `<div class="critical-week" style="width:${(w.end-w.start+1)*dayWidth}px">Semana ${w.week} · ${w.year}</div>`).join('');
  const header=Array.from({length:span},(_,i)=>{
   const date=new Date((left+i)*CG_DAY_MS),month=date.toLocaleString('es-MX',{month:'short',timeZone:'UTC'});
   return `<div class="critical-day ${Math.floor(i/7)%2===0?'week-shade':''}" title="${cgISO(left+i)}"><span>${esc(weekdays[i%7])}</span><strong>${String(date.getUTCDate()).padStart(2,'0')}</strong>${i%7===0?`<span>${esc(month)}</span>`:''}</div>`;
@@ -203,7 +216,7 @@ function renderCriticalGantt(){
  }
  const content=rows.join('')||'<p style="padding:18px">No hay actividades que coincidan con los filtros.</p>';
  container.innerHTML=`<div class="critical-chart" style="position:relative;--cg-day-width:${dayWidth}px;--cg-total-width:${span*dayWidth}px">
- <div class="critical-header"><div class="critical-header-caption">Orden por inicio · Selecciona una actividad para ver sus vínculos</div><div class="critical-day-header">${header}</div></div>
+ <div class="critical-header"><div class="critical-header-caption">Orden por inicio · Selecciona una actividad para ver sus vínculos</div><div><div class="critical-weeks">${weekHeader}</div><div class="critical-day-header">${header}</div></div></div>
  ${content}<svg class="critical-links" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2"></svg></div>`;
  criticalLinkObserver?.disconnect();
  if(focus){
@@ -473,6 +486,7 @@ function printCriticalOverview(pageLimit){
   const fit=measure.measureText(str).width>space?` textLength="${space}" lengthAdjust="spacingAndGlyphs"`:'';
   return `<text x="${x}" y="${y}" font-size="${size}" font-weight="${bold?'bold':'normal'}"${fit}>${esc(str)}</text>`;
  }
+ const weekBands=cgWeekBands(first,last);
  const ticks=[];
  const stride=Math.max(7,Math.ceil(days/12/7)*7);
  const monday=first+(8-new Date(first*CG_DAY_MS).getUTCDay())%7;
@@ -484,8 +498,14 @@ function printCriticalOverview(pageLimit){
   const begin=Math.floor(i*items.length/pages),end=Math.floor((i+1)*items.length/pages);
   const rows=items.slice(begin,end);
   const height=42+rows.length*rowHeight;
+  const weekHeader=weekBands.map((w,index)=>{
+   const x=chartX(w.start),span=chartX(w.end+1)-x;
+   const caption=span>=48?'Sem. '+w.week:'S'+w.week;
+   return `<rect x="${x}" y="0" width="${span}" height="15" fill="${index%2?'#f1f5f9':'#deebf7'}"/>`+
+    label(x+Math.min(2,span*.08),12,caption,11,span*.88,true);
+  }).join('');
   const grid=ticks.map(d=>`<line x1="${chartX(d)}" x2="${chartX(d)}" y1="25" y2="${height}" stroke="#cad5e1"/>`+
-   (chartX(d)<1364?label(chartX(d)+2,17,cgDateText(d),12,40):'')).join('');
+   (chartX(d)<1364?label(chartX(d)+2,30,cgDateText(d),12,40):'')).join('');
   const body=rows.map((n,j)=>{
    const y=36+j*rowHeight,baseline=y+rowHeight*.72;
    const a=startOf(n),b=endOf(n),valid=a!==null&&b!==null&&b>=a;
@@ -499,7 +519,7 @@ function printCriticalOverview(pageLimit){
   return `<section><header><h1>DYDEM · Ruta crítica general</h1><b>Hoja ${i+1} de ${pages}</b></header>
    <p>${cgISO(first)} – ${cgISO(last)} · Actividades ${begin+1} a ${end} de ${items.length} · ${result.cyclic?'Dependencias circulares':result.provisional?'Cálculo provisional':'Fechas calculadas por CPM'}</p>
    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 855" preserveAspectRatio="xMinYMin meet">
-   ${label(1,17,'ID',13,32,true)}${label(36,17,'Proyecto',13,76,true)}${byCategory?label(116,17,'Rubro',13,153,true):''}${label(titleX,17,'Actividad',13,591-titleX,true)}${label(598,17,'Predecesoras (ID)',13,145,true)}${grid}${body}</svg>
+   ${label(1,17,'ID',13,32,true)}${label(36,17,'Proyecto',13,76,true)}${byCategory?label(116,17,'Rubro',13,153,true):''}${label(titleX,17,'Actividad',13,591-titleX,true)}${label(598,17,'Predecesoras (ID)',13,145,true)}${weekHeader}${grid}${body}</svg>
    <footer><b style="color:#ab2639">■ Crítica</b>　<b style="color:#357cb4">■ Incluida</b>　<b style="color:#718096">■ Bloqueada</b>　·　Las predecesoras se identifican por su ID en cualquier hoja.</footer></section>`;
  }).join('');
  printWindow('DYDEM · Gantt completo',sheets,`@page{size:A4 landscape;margin:7mm}
