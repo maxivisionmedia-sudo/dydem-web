@@ -446,5 +446,60 @@ function printCriticalGanttPdf(){
  printWindow('DYDEM · Ruta crítica general · Gantt',html,css,true);
 }
 
-$('critical-print').onclick=printCriticalGanttPdf;
+function printCriticalOverview(pageLimit){
+ if(!isAdmin()||!criticalMode)return;
+ const result=computeCriticalCPM(criticalActivities,criticalConfiguration);
+ const startOf=n=>n.earlyStart??n.start;
+ const endOf=n=>n.earlyEnd??n.end;
+ const items=result.all.slice().sort((a,b)=>projectLabel(a.project_id).localeCompare(projectLabel(b.project_id),'es')||
+  (startOf(a)??Infinity)-(startOf(b)??Infinity)||a.id-b.id);
+ if(!items.length){alert('No hay actividades para exportar.');return}
+ const pages=Math.min(pageLimit,items.length);
+ const first=result.start,last=result.last,days=last-first+1;
+ const left=748,width=652,chartX=day=>left+(day-first)*width/days;
+ const measure=document.createElement('canvas').getContext('2d');
+ function label(x,y,value,size,space,bold=false){
+  const str=String(value);
+  measure.font=(bold?'bold ':'')+size+'px Arial';
+  const fit=measure.measureText(str).width>space?` textLength="${space}" lengthAdjust="spacingAndGlyphs"`:'';
+  return `<text x="${x}" y="${y}" font-size="${size}" font-weight="${bold?'bold':'normal'}"${fit}>${esc(str)}</text>`;
+ }
+ const ticks=[];
+ const stride=Math.max(7,Math.ceil(days/12/7)*7);
+ const monday=first+(8-new Date(first*CG_DAY_MS).getUTCDay())%7;
+ for(let day=monday;day<=last;day+=stride)ticks.push(day);
+ const rowsPerPage=Math.ceil(items.length/pages);
+ const rowHeight=Math.min(29,810/rowsPerPage),font=Math.min(14,rowHeight*.72);
+ const sheets=Array.from({length:pages},(_,i)=>{
+  const begin=Math.floor(i*items.length/pages),end=Math.floor((i+1)*items.length/pages);
+  const rows=items.slice(begin,end);
+  const height=42+rows.length*rowHeight;
+  const grid=ticks.map(d=>`<line x1="${chartX(d)}" x2="${chartX(d)}" y1="25" y2="${height}" stroke="#cad5e1"/>`+
+   (chartX(d)<1364?label(chartX(d)+2,17,cgDateText(d),12,40):'')).join('');
+  const body=rows.map((n,j)=>{
+   const y=36+j*rowHeight,baseline=y+rowHeight*.72;
+   const a=startOf(n),b=endOf(n),valid=a!==null&&b!==null&&b>=a;
+   const color=!n.included?'#718096':n.critical?'#ab2639':'#357cb4';
+   const bar=valid?`<rect x="${chartX(a)}" y="${y+rowHeight*.25}" width="${width*(b-a+1)/days}" height="${rowHeight*.50}" fill="${color}"/>`:label(left+5,baseline,'Sin fechas válidas',font,width);
+   return `<g data-activity="${n.id}"><line x1="0" x2="1400" y1="${y+rowHeight}" y2="${y+rowHeight}" stroke="#dce3e9"/>`+
+    label(1,baseline,n.id,font,32)+label(36,baseline,projectLabel(n.project_id),font,76)+
+    label(116,baseline,n.t.title||'Actividad',font,475)+label(598,baseline,n.predecessors.join(', ')||'—',font,144)+bar+'</g>';
+  }).join('');
+  return `<section><header><h1>DYDEM · Ruta crítica general</h1><b>Hoja ${i+1} de ${pages}</b></header>
+   <p>${cgISO(first)} – ${cgISO(last)} · Actividades ${begin+1} a ${end} de ${items.length} · ${result.cyclic?'Dependencias circulares':result.provisional?'Cálculo provisional':'Fechas calculadas por CPM'}</p>
+   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 855" preserveAspectRatio="xMinYMin meet">
+   ${label(1,17,'ID',13,32,true)}${label(36,17,'Proyecto',13,76,true)}${label(116,17,'Actividad',13,475,true)}${label(598,17,'Predecesoras (ID)',13,145,true)}${grid}${body}</svg>
+   <footer><b style="color:#ab2639">■ Crítica</b>　<b style="color:#357cb4">■ Incluida</b>　<b style="color:#718096">■ Bloqueada</b>　·　Las predecesoras se identifican por su ID en cualquier hoja.</footer></section>`;
+ }).join('');
+ printWindow('DYDEM · Gantt completo',sheets,`@page{size:A4 landscape;margin:7mm}
+ *{box-sizing:border-box;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+ body{margin:0;font-family:Arial,sans-serif}section{height:195mm;display:flex;flex-direction:column;break-inside:avoid}
+ section+section{break-before:page;page-break-before:always}header{display:flex;justify-content:space-between;align-items:center}
+ h1{font-size:14pt;margin:0}p,footer{font-size:8pt;margin:1.5mm 0}svg{width:100%;height:173mm;display:block}footer{margin-top:auto}`,true);
+}
+$('critical-print').onclick=()=>{
+ const pages=Number($('critical-print-format')?.value);
+ if([2,3,4].includes(pages))printCriticalOverview(pages);
+ else printCriticalGanttPdf();
+};
 $('critical-legend').innerHTML=criticalLegendHTML();
