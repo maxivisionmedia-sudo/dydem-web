@@ -64,6 +64,23 @@ function storeGet(key){try{return localStorage.getItem(key)}catch(e){return fall
 function storeSet(key,value){fallbackStorage.set(key,value);try{localStorage.setItem(key,value);return true}catch(e){return false}}
 function weekInfo(date=new Date()){const d=new Date(Date.UTC(date.getFullYear(),date.getMonth(),date.getDate()));d.setUTCDate(d.getUTCDate()-(d.getUTCDay()||7)+1);const start=new Date(d),end=new Date(d);end.setUTCDate(end.getUTCDate()+6);const th=new Date(d);th.setUTCDate(th.getUTCDate()+3);const year=th.getUTCFullYear(),jan4=new Date(Date.UTC(year,0,4));jan4.setUTCDate(jan4.getUTCDate()-(jan4.getUTCDay()||7)+1);const week=1+Math.round((d-jan4)/604800000),iso=x=>x.toISOString().slice(0,10);return {year,week,start:iso(start),end:iso(end),code:`${year}-S${String(week).padStart(2,'0')}`}}
 function assignAnnexes(){const counts={};tasks.forEach(t=>{if(!t.weekCode){t.weekCode='2026-S43';t.weekNumber=43;t.weekStart='2026-10-19';t.weekEnd='2026-10-25'}const wk=t.weekNumber||43;if(!t.annex){counts[t.weekCode]=(counts[t.weekCode]||0)+1;t.annex=`${wk}_${counts[t.weekCode]}`}else counts[t.weekCode]=Math.max(counts[t.weekCode]||0,Number(t.annex.split('_')[1])||0)})}
+const workCategories=[
+ "Preliminares, desmontajes y demoliciones",
+ "Albañilería y cortes en concreto",
+ "Estructura metálica y herrería",
+ "Estructura de poste metálico (−3)",
+ "Instalación de tablaroca (−4)",
+ "Encintado y acabado de juntas (−5)",
+ "Ductería HVAC",
+ "Instalación eléctrica de fuerza, contactos y alumbrado",
+ "Bajo voltaje y comunicaciones",
+ "Tubería de chiller y enfriamiento de proceso",
+ "Aire comprimido",
+ "Tótems, soportes y pasamuros",
+ "Maquinaria y termorreguladores",
+ "Acabado sanitario de muros y plafones",
+ "Pisos y acabado epóxico sanitario"
+];
 const fresh=t=>({...t,start:'',end:'',before:'',after:'',reviewers:'',reviewAnnex:'',authorizer:'',progress:0,evidenceProgress:0,verification:0,attachments:[],proposalAttachments:[],reviewAttachments:[],manualApprovals:{review:false,authorization:false,verification:false},proposalDescription:'',completedDate:'',workCompletedDate:'',responsibles:{review:[],authorization:[],verification:[]},approvals:{review:[],authorization:[],verification:[]},steps:[false,false,false,false,false,false,false]});
 function migrate(t){
  const n=fresh({id:t.id,title:t.title});
@@ -236,7 +253,7 @@ function canEditAnyStep(){return names.some((_,i)=>canEditStep(i))}
 function canAddActivity(){return isAdmin()||(isCustom()&&accountPermissions().add===true)}
 function canDeleteActivity(){return isAdmin()||(isCustom()&&accountPermissions().delete===true)}
 function canPostComment(){return isAdmin()||(isCustom()&&accountPermissions().comment===true)}
-function stageForField(f){return (['title','start','end','before','after','proposalDescription'].includes(f))?0:f==='progress'||f==='workCompletedDate'?3:f==='evidenceProgress'?5:f==='completedDate'?6:-1}
+function stageForField(f){return (['title','start','end','before','after','proposalDescription','workCategory'].includes(f))?0:f==='progress'||f==='workCompletedDate'?3:f==='evidenceProgress'?5:f==='completedDate'?6:-1}
 function permissionChooser(prefix,p){
  const perms=p&&Array.isArray(p.steps)?p:emptyPermissions();
  const documentado=`<fieldset class="permission-documentado"><legend>6. Evidencia</legend>
@@ -1361,7 +1378,7 @@ function hybridReadOnlyStage(t,i){
 function card(t){if(!isAdmin()&&!isCustom())return viewerCard(t);const steps=names.map((n,i)=>{
  if(approvalStageKey(i)!==null&&!isAdmin())return `<div class="viewer-step approval-stage-readonly ${i===1?'review-with-dudas':''}" data-focus-stage="${i}"><b>${i+1}. ${esc(n)}:</b><div class="viewer-approval-value">${approvalStageSummary(t,i)}</div>${i===1?`<div class="review-dudas-wide">${reviewFilesSection(t)}${dudasSection(t)}</div>`:''}</div>`;
  if(isCustom()&&!canEditStep(i))return hybridReadOnlyStage(t,i);const canEdit=canEditStep(i);let detail='';if(i===0)detail=`<div class="row" style="margin-top:8px"><div class="field"><label>Inicio tentativo</label><input type="date" data-id="${t.id}" data-field="start" ${canEdit?'':'disabled'} value="${esc(t.start)}"></div><div class="field"><label>Final tentativo</label><input type="date" data-id="${t.id}" data-field="end" ${canEdit?'':'disabled'} value="${esc(t.end)}"></div></div><div class="row" style="margin-top:8px"><div class="field"><label>Debe completarse antes</label><select data-id="${t.id}" data-field="before" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.before)}</select></div><div class="field"><label>Solo después de esta actividad</label><select data-id="${t.id}" data-field="after" ${canEdit?'':'disabled'}>${selectOptions(t.id,t.after)}</select></div></div>`;
-if(i===0)detail+=`<div class="field proposal-optional-section"><label for="proposal-description-${t.id}">Descripción (opcional)</label><textarea id="proposal-description-${t.id}" data-id="${t.id}" data-field="proposalDescription" rows="3" maxlength="10000" placeholder="Descripción adicional de la propuesta (opcional)" ${canEdit?'':'disabled'}>${esc(t.proposalDescription||'')}</textarea></div>`;
+if(i===0)detail+=`<div class="field"><label for="work-category-${t.id}">Rubro de obra</label><select id="work-category-${t.id}" data-id="${t.id}" data-field="workCategory" ${canEdit?'':'disabled'}><option value="">Sin rubro asignado</option>${workCategories.map(c=>`<option ${c===t.workCategory?'selected':''}>${esc(c)}</option>`).join('')}</select></div><div class="field proposal-optional-section"><label for="proposal-description-${t.id}">Descripción (opcional)</label><textarea id="proposal-description-${t.id}" data-id="${t.id}" data-field="proposalDescription" rows="3" maxlength="10000" placeholder="Descripción adicional de la propuesta (opcional)" ${canEdit?'':'disabled'}>${esc(t.proposalDescription||'')}</textarea></div>`;
 if(i===3){const v=t.progress;detail=`<div class="row" style="margin-top:6px"><span class="muted">Avance de obra</span><input class="pct" type="number" min="0" max="100" data-id="${t.id}" data-field="progress" ${canEdit?'':'disabled'} value="${v}">%</div><div class="progress"><div style="width:${v}%"></div></div>`}
 if(i===5){
  const value=evidencePct(t);
