@@ -13,7 +13,7 @@ const cgDateText=day=>{const d=new Date(day*CG_DAY_MS);return String(d.getUTCDat
 const cgDigits=days=>Math.round(days)+' día'+(Math.round(days)===1?'':'s');
 function criticalLegendHTML(){
  return `<h3 id="critical-legend-title">Cómo leer el Gantt</h3>
- <dl class="critical-terms">
+ <dl class="critical-terms"><div><dt>Flechas de dependencia</dt><dd>Selecciona una barra o su actividad. Las flechas azules llegan desde sus predecesoras y las moradas apuntan a sus sucesoras. Se dibujan entre barras visibles.</dd></div>
   <div><dt>Duración · días naturales</dt><dd>Días programados entre el inicio y el final previstos, contando ambos. Del 10 al 14 son 5 días; incluye sábados, domingos y festivos. No indica días restantes.</dd></div>
   <div><dt>Holgura total</dt><dd>Margen para desplazar una actividad sin retrasar el fin global calculado. Se obtiene restando el inicio temprano al inicio tardío. Puede desplazar actividades posteriores y se comparte con su cadena: no se suma entre actividades.</dd></div>
   <div><dt><i class="critical-key key-critical" aria-hidden="true"></i>Crítica · holgura 0</dt><dd>Un retraso desplaza el fin global, si las demás fechas y duraciones se mantienen. Puede haber varias rutas críticas. La importancia del trabajo y su porcentaje de avance no determinan esta etiqueta.</dd></div>
@@ -119,6 +119,23 @@ function cgRenderSummary(result){
  <small>${result.links} dependencias válidas · ${result.omittedDates} actividades incluidas sin fechas completas${result.missingLinks?' · '+result.missingLinks+' vínculos a actividades bloqueadas o sin fechas':''}.
  ${result.links===0?'Añade dependencias para identificar una ruta crítica real.':''}</small></div>`;
 }
+function drawCriticalLinks(chart,node){
+ const bars=new Map([...chart.querySelectorAll('.critical-bar')].map(bar=>[Number(bar.dataset.criticalPick),bar]));
+ const origin=chart.getBoundingClientRect(), paths=[];
+ function connect(from,to,color){
+  if(!bars.has(from)||!bars.has(to))return;
+  const a=bars.get(from).getBoundingClientRect(), b=bars.get(to).getBoundingClientRect();
+  const x=a.right-origin.left,y=a.top+a.height/2-origin.top;
+  const target=b.left-origin.left+6,down=b.top>a.top;
+  const tip=(down?b.top:b.bottom)-origin.top,base=tip+(down?-6:6);
+  const line=`M${x} ${y} H${target} V${base}`;
+  paths.push(`<path d="${line}" fill="none" stroke="white" stroke-width="4"/><path d="${line}" fill="none" stroke="${color}" stroke-width="2"/><path d="M${target-4} ${base} L${target} ${tip} L${target+4} ${base} Z" fill="${color}"/>`);
+ }
+ for(const id of node.effectiveDependencies)connect(id,node.id,'#12578a');
+ for(const id of node.successors)connect(node.id,id,'#784191');
+ chart.querySelector('.critical-links').innerHTML=paths.join('');
+}
+let criticalLinkObserver;
 function renderCriticalGantt(){
  if(!criticalMode||!isAdmin())return;
  const result=computeCriticalCPM(criticalActivities,criticalConfiguration);
@@ -149,11 +166,17 @@ function renderCriticalGantt(){
   if(start===null||end===null||start>end)return null;
   return {left:(start-left)*dayWidth,width:Math.max(dayWidth,(end-start+1)*dayWidth)};
  };
+ const focus=result.byId.get(Number(criticalSelectedId));
+ const previous=new Set(focus?.predecessors||[]);
+ const startOf=n=>n.earlyStart??n.start??Infinity;
  const rows=[];
  for(const [pid,items] of byProject){
   if(!items.length)continue;
   rows.push(`<div class="critical-project-row"><div class="critical-project-name">${esc(projectLabel(pid))} · ${items.length} actividad${items.length===1?'':'es'}</div><div class="critical-project-rail"></div></div>`);
+  items.sort((a,b)=>startOf(a)-startOf(b)||a.id-b.id);
   for(const n of items){
+   const role=n===focus?'Seleccionada':previous.has(n.id)?'Predecesora':focus&&n.predecessors.includes(focus.id)?'Sucesora':'';
+   const accent=role==='Seleccionada'?'#8a5400':role==='Predecesora'?'#12578a':'#784191';
    const color=n.critical?'is-critical':!n.included?'is-blocked':'';
    const selected=n.id===criticalSelectedId?'selected':'';
    const planned=trackRect(n.start,n.end);
@@ -164,15 +187,22 @@ function renderCriticalGantt(){
    rows.push(`<div class="critical-activity-row ${!n.included?'is-blocked':''} ${selected}" data-critical-row="${n.id}">
     <div class="critical-row-info"><input type="checkbox" data-critical-include="${n.id}" aria-label="Incluir actividad ${esc(n.t.annex)}" ${n.included?'checked':''}>
       <button type="button" class="critical-row-label" data-critical-pick="${n.id}" title="${esc(n.t.title)}">
-       <b>${esc(n.t.annex)} · ${esc(n.t.title)}</b><small><span>${esc(line)}</span>${n.duration!==null?'<span>Duración: '+cgDigits(n.duration)+'</span>':''}</small>
+       <b>${esc(n.t.annex)} · ${esc(n.t.title)}</b><small>${role?`<strong style="color:${accent}">${role}</strong> · `:""}<span>${esc(line)}</span>${n.duration!==null?'<span>Duración: '+cgDigits(n.duration)+'</span>':''}</small>
       </button>${n.critical?'<span class="critical-flag">CRÍTICA</span>':''}</div>
     <div class="critical-rail" data-critical-pick="${n.id}">${ghost}${bar}${markToday()}</div></div>`);
   }
  }
  const content=rows.join('')||'<p style="padding:18px">No hay actividades que coincidan con los filtros.</p>';
- container.innerHTML=`<div class="critical-chart" style="--cg-day-width:${dayWidth}px;--cg-total-width:${span*dayWidth}px">
- <div class="critical-header"><div class="critical-header-caption">Proyecto · Anexo · Actividad</div><div class="critical-day-header">${header}</div></div>
- ${content}</div>`;
+ container.innerHTML=`<div class="critical-chart" style="position:relative;--cg-day-width:${dayWidth}px;--cg-total-width:${span*dayWidth}px">
+ <div class="critical-header"><div class="critical-header-caption">Orden por inicio · Selecciona una actividad para ver sus vínculos</div><div class="critical-day-header">${header}</div></div>
+ ${content}<svg class="critical-links" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2"></svg></div>`;
+ criticalLinkObserver?.disconnect();
+ if(focus){
+  const chart=container.firstElementChild;
+  const draw=()=>drawCriticalLinks(chart,focus);
+  draw();
+  if(typeof ResizeObserver!=='undefined'){criticalLinkObserver=new ResizeObserver(draw);criticalLinkObserver.observe(chart)}
+ }
  container.scrollLeft=oldLeft;container.scrollTop=oldTop;
  renderCriticalInspector(result);
 }
@@ -186,6 +216,7 @@ function renderCriticalInspector(result=computeCriticalCPM(criticalActivities,cr
  box.innerHTML=`<h3>Configurar · ${esc(node.t.annex)} · ${esc(node.t.title)}</h3>
  <p class="muted">Proyecto: ${esc(projectLabel(node.project_id))} · Inicio previsto: ${esc(node.t.start||'Sin fecha')} · Final previsto: ${esc(node.t.end||'Sin fecha')}
  · Duración: ${node.duration!==null?cgDigits(node.duration)+(node.duration===1?' natural':' naturales'):'no disponible'}</p>
+  ${[['Predecesoras',result.all.filter(n=>chosen.has(n.id))],['Sucesoras',result.all.filter(n=>n.predecessors.includes(node.id))]].map(([label,list])=>'<p><b>'+label+'</b> · '+(list.map(n=>esc(projectLabel(n.project_id)+' / '+n.t.annex+' · '+n.t.title)).join(' · ')||'Ninguna')+'</p>').join('')}
  <form id="critical-edit-form">
  <label><input id="critical-edit-included" type="checkbox" ${node.included?'checked':''}> Incluir esta actividad en el Gantt global</label>
  <label for="critical-predecessors">Actividades predecesoras (deben terminar antes de empezar esta)</label>
@@ -255,9 +286,8 @@ $('critical-gantt').addEventListener('click',e=>{
  const picked=e.target.closest('[data-critical-pick]');
  if(!picked||!isAdmin())return;
  criticalSelectedId=Number(picked.dataset.criticalPick);
- $('critical-gantt').querySelectorAll('.critical-activity-row').forEach(el=>el.classList.toggle('selected',Number(el.dataset.criticalRow)===criticalSelectedId));
- renderCriticalInspector();
- $('critical-config-panel').scrollIntoView({behavior:'smooth',block:'nearest'});
+ renderCriticalGantt();
+ if(e.detail===0)$('critical-gantt').querySelector('[data-critical-row="'+criticalSelectedId+'"] .critical-row-label')?.focus({preventScroll:true});
 });
 async function cgSave(activityId,included,predecessors,feedback){
  const {data,error}=await cloud.rpc('dydem_set_critical_activity',{
